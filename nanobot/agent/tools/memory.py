@@ -103,8 +103,7 @@ class RetrieveMemoryTool(Tool):
             "The information to store in long-term memory. Be specific and clear."
         ),
         category=StringSchema(
-            "general",
-            description="Category of the memory: personal, project, preference, or general",
+            "Category of the memory: personal, project, preference, or general (default: general)"
         ),
         required=["content"],
     )
