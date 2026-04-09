@@ -332,7 +332,28 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
             channel=ctx.msg.channel,
             chat_id=ctx.msg.chat_id,
             content="ReMe memory system is not enabled. Add reme.yaml to workspace to enable.",
-        )
+
+    # Extract user name from USER.md for consistent memory attribution
+    def get_user_name() -> str:
+        """Extract user name from USER.md."""
+        try:
+            user_content = loop.context.memory.read_user()
+            if not user_content:
+                return "default_user"
+            import re
+            # Match Chinese format: **名字：** 张烽林
+            match = re.search(r"\*\*名字[：:]\*\*\s*(\S+)", user_content)
+            if match:
+                return match.group(1)
+            # Match English format: **Name**: xxx
+            match = re.search(r"\*\*Name\*\*[：:]\s*(\S+)", user_content, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+        return "default_user"
+
+    user_name = get_user_name()
 
     parts = ctx.raw.split(maxsplit=2)
     action = parts[1] if len(parts) > 1 else "list"
@@ -365,11 +386,11 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
                     "Try `/memory status` for more details."
                 )
             else:
-                memories = await loop.reme_adapter.list_memories(limit=20)
+                memories = await loop.reme_adapter.list_memories(user_id=user_name, limit=20)
                 if not memories:
-                    content = "No memories found."
+                    content = f"No memories found for user '{user_name}'."
                 else:
-                    lines = ["## Memories\n"]
+                    lines = [f"## Memories ({user_name})\n"]
                     for m in memories:
                         content_preview = m.content[:100] + "..." if len(m.content) > 100 else m.content
                         lines.append(f"- `{m.memory_id[:8]}` {content_preview}")
@@ -385,11 +406,11 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
                 )
             else:
                 query = parts[2]
-                result = await loop.reme_adapter.retrieve_memory(query)
+                result = await loop.reme_adapter.retrieve_memory(query, user_id=user_name)
                 if result:
-                    content = f"## Search Results\n\n{result}"
+                    content = f"## Search Results ({user_name})\n\n{result}"
                 else:
-                    content = "No matching memories found."
+                    content = f"No matching memories found for '{user_name}'."
 
         elif action == "add":
             if len(parts) < 3:
@@ -401,9 +422,9 @@ async def cmd_memory(ctx: CommandContext) -> OutboundMessage:
                 )
             else:
                 content_text = parts[2]
-                node = await loop.reme_adapter.add_memory(content_text)
+                node = await loop.reme_adapter.add_memory(content_text, user_id=user_name)
                 if node:
-                    content = f"✅ Memory added: {content_text[:50]}..."
+                    content = f"✅ Memory added for {user_name}: {content_text[:50]}..."
                 else:
                     content = "❌ Failed to add memory. Check `/memory status` for details."
 
