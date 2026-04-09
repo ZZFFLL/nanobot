@@ -51,7 +51,7 @@ class MemoryStore:
         self._cursor_file = self.memory_dir / ".cursor"
         self._dream_cursor_file = self.memory_dir / ".dream_cursor"
         self._git = GitStore(workspace, tracked_files=[
-            "SOUL.md", "USER.md", "memory/MEMORY.md",
+            "SOUL.md", "USER.md",
         ])
         self._maybe_migrate_legacy_history()
 
@@ -472,14 +472,43 @@ class Consolidator:
         # Try using ReMe
         if self.reme_adapter:
             try:
-                await self.reme_adapter.summarize_conversation(messages)
-                logger.info("Archived {} messages via ReMe", len(messages))
+                # Extract user name from USER.md for better memory attribution
+                user_id = self._extract_user_name()
+                await self.reme_adapter.summarize_conversation(messages, user_id=user_id)
+                logger.info("Archived {} messages via ReMe for user '{}'", len(messages), user_id)
                 return True
             except Exception as e:
                 logger.warning("ReMe archive failed, falling back to LLM: {}", e)
 
         # Fallback to original logic
         return await self.archive(messages)
+
+    def _extract_user_name(self) -> str:
+        """Extract user name from USER.md for memory attribution.
+
+        Returns:
+            User name from USER.md, or 'default_user' if not found.
+        """
+        try:
+            user_content = self.store.read_user()
+            if not user_content:
+                return "default_user"
+
+            # Look for name in USER.md
+            # Format 1: **名字：** 张烽林
+            # Format 2: - **Name**: xxx
+            import re
+            # Match Chinese format
+            match = re.search(r"\*\*名字[：:]\*\*\s*(\S+)", user_content)
+            if match:
+                return match.group(1)
+            # Match English format
+            match = re.search(r"\*\*Name\*\*[：:]\s*(\S+)", user_content, re.IGNORECASE)
+            if match:
+                return match.group(1)
+        except Exception:
+            pass
+        return "default_user"
 
     async def maybe_consolidate_by_tokens(self, session: Session) -> None:
         """Loop: archive old messages until prompt fits within safe budget.
@@ -555,6 +584,8 @@ class Dream:
     Phase 1 produces an analysis summary (plain LLM call).
     Phase 2 delegates to AgentRunner with read_file / edit_file tools so the
     LLM can make targeted, incremental edits instead of replacing entire files.
+
+    Memory facts are stored to ReMe vector storage instead of MEMORY.md.
     """
 
     def __init__(
@@ -565,6 +596,7 @@ class Dream:
         max_batch_size: int = 20,
         max_iterations: int = 10,
         max_tool_result_chars: int = 16_000,
+        reme_adapter: "RemeMemoryAdapter | None" = None,
     ):
         self.store = store
         self.provider = provider
@@ -572,6 +604,7 @@ class Dream:
         self.max_batch_size = max_batch_size
         self.max_iterations = max_iterations
         self.max_tool_result_chars = max_tool_result_chars
+        self.reme_adapter = reme_adapter
         self._runner = AgentRunner(provider)
         self._tools = self._build_tools()
 
@@ -607,12 +640,10 @@ class Dream:
             f"[{e['timestamp']}] {e['content']}" for e in batch
         )
 
-        # Current file contents
-        current_memory = self.store.read_memory() or "(empty)"
+        # Current profile contents (no MEMORY.md - that's handled by ReMe)
         current_soul = self.store.read_soul() or "(empty)"
         current_user = self.store.read_user() or "(empty)"
         file_context = (
-            f"## Current MEMORY.md\n{current_memory}\n\n"
             f"## Current SOUL.md\n{current_soul}\n\n"
             f"## Current USER.md\n{current_user}"
         )
@@ -640,6 +671,9 @@ class Dream:
         except Exception:
             logger.exception("Dream Phase 1 failed")
             return False
+
+        # Extract knowledge facts and store to ReMe
+        await self._store_facts_to_reme(analysis, history_text)
 
         # Phase 2: Delegate to AgentRunner with read_file / edit_file
         phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}"
@@ -702,3 +736,52 @@ class Dream:
                 logger.info("Dream commit: {}", sha)
 
         return True
+
+    async def _store_facts_to_reme(self, analysis: str, history_text: str) -> None:
+        """Extract knowledge facts from analysis and store to ReMe.
+
+        Facts that don't belong to USER or SOUL (project context, knowledge,
+        tool patterns) are stored to ReMe vector memory.
+
+        Args:
+            analysis: Phase 1 analysis output
+            history_text: Original history text for context
+        """
+        logger.info("Dream: checking ReMe for knowledge storage (available={}, healthy={})",
+                    self.reme_adapter is not None,
+                    self.reme_adapter.is_healthy() if self.reme_adapter else False)
+
+        if not self.reme_adapter or not self.reme_adapter.is_healthy():
+            logger.info("ReMe not available, skipping knowledge storage")
+            return
+
+        # Extract non-USER/SOUL facts from analysis
+        # Format: lines that don't start with [USER] or [SOUL]
+        facts = []
+        for line in analysis.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            # Skip USER/SOUL/SKIP lines - those go to profile files
+            if line.startswith("[USER]") or line.startswith("[SOUL]") or line.startswith("[SKIP]"):
+                continue
+            # This might be a knowledge fact (from old [MEMORY] pattern or general facts)
+            # Store to ReMe
+            facts.append(line)
+
+        logger.info("Dream: found {} knowledge facts to store", len(facts))
+
+        if not facts:
+            return
+
+        # Extract user name for memory attribution
+        user_id = self._extract_user_name()
+
+        # Store each fact to ReMe with context
+        for fact in facts:
+            try:
+                content = f"[knowledge] {fact}"
+                await self.reme_adapter.add_memory(content, user_id=user_id)
+                logger.info("Stored knowledge to ReMe for user '{}': {}", user_id, fact[:50])
+            except Exception as e:
+                logger.warning("Failed to store fact to ReMe: {}", e)

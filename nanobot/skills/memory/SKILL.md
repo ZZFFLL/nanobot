@@ -1,6 +1,6 @@
 ---
 name: memory
-description: Two-layer memory system with Dream-managed knowledge files.
+description: Memory system with Dream-managed profile files and ReMe vector storage.
 always: true
 ---
 
@@ -10,8 +10,19 @@ always: true
 
 - `SOUL.md` — Bot personality and communication style. **Managed by Dream.** Do NOT edit.
 - `USER.md` — User profile and preferences. **Managed by Dream.** Do NOT edit.
-- `memory/MEMORY.md` — Long-term facts (project context, important events). **Managed by Dream.** Do NOT edit.
 - `memory/history.jsonl` — append-only JSONL, not loaded into context. Prefer the built-in `grep` tool to search it.
+
+## ReMe Vector Memory (Long-term Storage)
+
+Use the memory tools for semantic retrieval and storage:
+
+| Tool | Purpose |
+|------|---------|
+| `retrieve_memory` | Semantic search for past conversations and facts |
+| `add_memory` | Store important information to long-term memory |
+| `list_memories` | List recent memories |
+| `delete_memory` | Delete specific memory |
+| `get_memory_status` | Check memory system health |
 
 ## Search Past Events
 
@@ -31,6 +42,6 @@ Examples (replace `keyword`):
 
 ## Important
 
-- **Do NOT edit SOUL.md, USER.md, or MEMORY.md.** They are automatically managed by Dream.
+- **Do NOT edit SOUL.md or USER.md.** They are automatically managed by Dream.
 - If you notice outdated information, it will be corrected when Dream runs next.
 - Users can view Dream's activity with the `/dream-log` command.

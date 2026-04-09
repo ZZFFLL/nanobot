@@ -280,6 +280,7 @@ class AgentLoop:
             store=self.context.memory,
             provider=provider,
             model=self.model,
+            reme_adapter=self.reme_adapter,
         )
         self._register_default_tools()
         self.commands = CommandRouter()
@@ -314,7 +315,27 @@ class AgentLoop:
         # Register ReMe memory tools if adapter is available
         if self.reme_adapter:
             from nanobot.agent.tools.memory import register_memory_tools
-            register_memory_tools(self.tools, self.reme_adapter)
+
+            def get_user_name() -> str:
+                """Extract user name from USER.md for memory attribution."""
+                try:
+                    user_content = self.context.memory.read_user()
+                    if not user_content:
+                        return "default_user"
+                    import re
+                    # Match Chinese format: **名字：** 张烽林
+                    match = re.search(r"\*\*名字[：:]\*\*\s*(\S+)", user_content)
+                    if match:
+                        return match.group(1)
+                    # Match English format: **Name**: xxx
+                    match = re.search(r"\*\*Name\*\*[：:]\s*(\S+)", user_content, re.IGNORECASE)
+                    if match:
+                        return match.group(1)
+                except Exception:
+                    pass
+                return "default_user"
+
+            register_memory_tools(self.tools, self.reme_adapter, get_user_name)
 
     async def _connect_mcp(self) -> None:
         """Connect to configured MCP servers (one-time, lazy)."""

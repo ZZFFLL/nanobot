@@ -1,8 +1,8 @@
-Compare conversation history against current memory files.
+Compare conversation history against current profile files.
 Output one line per finding:
 [FILE] atomic fact or change description
 
-Files: USER (identity, preferences, habits), SOUL (bot behavior, tone), MEMORY (knowledge, project context, tool patterns)
+Files: USER (identity, preferences, habits), SOUL (bot behavior, tone)
 
 Rules:
 - Only new or conflicting information — skip duplicates and ephemera

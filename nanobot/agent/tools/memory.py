@@ -11,13 +11,19 @@ The LLM decides when to use these tools, rather than automatic retrieval.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 from nanobot.agent.tools.base import Tool, tool_parameters
 from nanobot.agent.tools.schema import IntegerSchema, StringSchema, tool_parameters_schema
 
 if TYPE_CHECKING:
     from nanobot.agent.reme_adapter import RemeMemoryAdapter
+
+
+# Default user name getter
+def _default_get_user_name() -> str:
+    """Default implementation returns 'default_user'."""
+    return "default_user"
 
 
 # ---------------------------------------------------------------------------
@@ -126,8 +132,9 @@ class AddMemoryTool(Tool):
     Be selective - only store genuinely important information.
     """
 
-    def __init__(self, adapter: RemeMemoryAdapter):
+    def __init__(self, adapter: RemeMemoryAdapter, get_user_name: Callable[[], str] = _default_get_user_name):
         self._adapter = adapter
+        self._get_user_name = get_user_name
 
     @property
     def name(self) -> str:
@@ -160,9 +167,10 @@ class AddMemoryTool(Tool):
             else:
                 formatted_content = content
 
-            node = await self._adapter.add_memory(formatted_content)
+            user_id = self._get_user_name()
+            node = await self._adapter.add_memory(formatted_content, user_id=user_id)
             if node:
-                return f"Memory stored successfully (ID: {node.memory_id[:8]}...)"
+                return f"Memory stored successfully for {user_id} (ID: {node.memory_id[:8]}...)"
             return "Failed to store memory."
         except Exception as e:
             return f"Error storing memory: {str(e)}"
@@ -370,15 +378,20 @@ class DeleteMemoryTool(Tool):
 # ---------------------------------------------------------------------------
 
 
-def register_memory_tools(registry: Any, adapter: RemeMemoryAdapter) -> None:
+def register_memory_tools(
+    registry: Any,
+    adapter: RemeMemoryAdapter,
+    get_user_name: Callable[[], str] = _default_get_user_name
+) -> None:
     """Register all memory tools with the given registry.
 
     Args:
         registry: ToolRegistry instance
         adapter: RemeMemoryAdapter instance
+        get_user_name: Callable that returns the current user's name for memory attribution
     """
     registry.register(RetrieveMemoryTool(adapter))
-    registry.register(AddMemoryTool(adapter))
+    registry.register(AddMemoryTool(adapter, get_user_name))
     registry.register(ListMemoriesTool(adapter))
     registry.register(GetMemoryStatusTool(adapter))
     registry.register(DeleteMemoryTool(adapter))

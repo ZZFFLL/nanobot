@@ -71,26 +71,21 @@ class ContextBuilder:
         return "\n\n---\n\n".join(parts)
 
     def _get_memory_content(self, current_query: str | None = None) -> str:
-        """Get memory content from file-based storage.
+        """Get memory content - now returns empty string.
+
+        MEMORY.md is managed by Dream system and should not be injected into context.
+        Long-term memory is now handled by ReMe vector storage via retrieve_memory tool.
 
         Args:
             current_query: Current user message (unused, kept for API compatibility)
-
-        Important:
-            - Skips retrieval for "[token-probe]" which is an internal estimation probe
-            - ReMe semantic retrieval is now available via retrieve_memory tool
-            - This method only returns file-based memory (MEMORY.md) for fast access
-
-        The LLM can use the retrieve_memory tool for semantic search when needed.
         """
         # CRITICAL: Skip memory retrieval for token estimation probes
-        # "[token-probe]" is used by Consolidator.estimate_session_prompt_tokens()
         if current_query == "[token-probe]":
             return ""
 
-        # Always use file-based memory (fast, <1ms)
+        # MEMORY.md is managed by Dream, not injected into context
         # ReMe semantic retrieval is available via retrieve_memory tool
-        return self.memory.get_memory_context()
+        return ""
 
     def _get_identity(self) -> str:
         """Get the core identity section."""

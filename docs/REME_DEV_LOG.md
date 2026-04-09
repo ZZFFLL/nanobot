@@ -222,6 +222,7 @@
   - 待观察实际效果，可能需要额外提取关键词层
 
 ### 7. 监控和告警
+
 - **优先级**: 低
 - **状态**: ⏳ 待开发
 - **内容**:
@@ -595,4 +596,154 @@ def _get_memory_content(self, current_query: str | None = None) -> str:
 ---
 
 **记录人**: Claude Code
-**最后更新**: 2026-04-08 下午
+**最后更新**: 2026-04-09 下午
+
+---
+
+## 2026-04-09 重构：移除 MEMORY.md，优化记忆架构
+
+### 背景
+
+经过分析发现 nanobot 原生记忆架构中：
+1. `MEMORY.md` 由 Dream 系统自动管理，不应由 Agent 主动操作
+2. `memory/YYYY-MM-DD.md` 每日流水账在 nanobot 原生中不存在，是 AGENTS.md 中虚构的概念
+3. `/new` 命令调用 `archive()` 而非 `archive_with_reme()`，导致聊天内容未写入 ReMe
+
+### 修改内容
+
+#### 1. 移除 MEMORY.md 引用
+
+**修改文件**：
+
+| 文件 | 修改内容 |
+|------|---------|
+| `nanobot/agent/context.py` | `_get_memory_content()` 返回空，不再读取 MEMORY.md |
+| `nanobot/templates/agent/identity.md` | 移除 MEMORY.md 说明，只保留 USER.md/SOUL.md |
+| `nanobot/skills/memory/SKILL.md` | 移除 MEMORY.md，添加 ReMe 工具说明 |
+| `nanobot/agent/memory.py` | GitStore 移除 `memory/MEMORY.md` 跟踪 |
+
+**理由**：
+- MEMORY.md 由 Dream 系统管理，Agent 不应操作
+- 长期记忆统一使用 ReMe 向量库
+
+#### 2. Dream 记忆写入 ReMe
+
+**修改文件**：
+
+| 文件 | 修改内容 |
+|------|---------|
+| `nanobot/templates/agent/dream_phase1.md` | 只处理 USER/SOUL，移除 MEMORY 分类 |
+| `nanobot/agent/memory.py` | Dream 类添加 `reme_adapter` 参数和 `_store_facts_to_reme()` 方法 |
+| `nanobot/agent/loop.py` | 创建 Dream 时传入 `reme_adapter` |
+
+**新增方法 `_store_facts_to_reme()`**：
+- 分析 Phase 1 输出，提取非 USER/SOUL 的内容
+- 写入 ReMe 向量库
+- 日志级别改为 `info`，便于调试
+
+#### 3. 清理虚构的每日流水账
+
+**修改文件**：`C:\Users\huawei\.nanobot\workspace\AGENTS.md`
+
+**清理内容**：
+- 移除 `memory/YYYY-MM-DD.md` 每日流水账引用（nanobot 原生不存在此功能）
+- 简化 Context 压缩恢复流程
+
+#### 4. 修复 `/new` 命令
+
+**问题**：`/new` 命令调用 `archive()` 而非 `archive_with_reme()`
+
+**修改文件**：`nanobot/command/builtin.py`
+
+**修改内容**：
+```python
+# 修改前
+loop._schedule_background(loop.consolidator.archive(snapshot))
+
+# 修改后
+loop._schedule_background(loop.consolidator.archive_with_reme(snapshot))
+```
+
+**效果**：`/new` 命令现在会将对话内容写入 ReMe 向量库
+
+### 修复后记忆架构
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    记忆系统架构 (2026-04-09)                 │
+├─────────────────────────────────────────────────────────────┤
+│                                                             │
+│  触发时机          写入位置              内容类型            │
+│  ─────────────────────────────────────────────────────────  │
+│  /new 命令         ReMe + history.jsonl   对话摘要          │
+│  Token 超限        ReMe + history.jsonl   对话摘要          │
+│  Dream 定时任务    USER.md/SOUL.md + ReMe  用户画像/行为调整 │
+│                                                             │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  文件用途：                                                  │
+│  ├─ USER.md      用户画像（Dream 自动管理）                 │
+│  ├─ SOUL.md      Agent 行为（Dream 自动管理）               │
+│  ├─ history.jsonl 对话历史摘要（append-only）               │
+│  └─ ReMe 向量库   长期记忆（语义检索）                       │
+│                                                             │
+│  ─────────────────────────────────────────────────────────  │
+│                                                             │
+│  Agent 访问方式：                                           │
+│  ├─ USER.md/SOUL.md  → 每次对话自动注入 prompt              │
+│  ├─ history.jsonl    → grep 工具搜索                        │
+│  └─ ReMe 向量库      → retrieve_memory 工具（LLM 决定调用） │
+│                                                             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 验证结果
+
+**日志确认**：
+```
+2026-04-09 11:30:36 | INFO | memory.py:721 | _store_facts_to_reme | Dream: checking ReMe for knowledge storage (available=True, healthy=True)
+2026-04-09 11:30:36 | INFO | memory.py:743 | _store_facts_to_reme | Dream: found 0 knowledge facts to store
+2026-04-09 11:30:50 | INFO | memory.py:691 | run | Dream done: 1 change(s), cursor advanced to 12
+```
+
+**Git 提交**：
+```
+515a98d dream: 2026-04-09 11:14, 1 change(s)
+ SOUL.md | 123 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++--------
+ USER.md |  84 ++++++++++++++++++++++++++++----------------
+ 2 files changed, 163 insertions(+), 44 deletions(-)
+```
+
+### 遗留问题
+
+**Phase 1 分析结果为什么不写入 ReMe？**
+
+当前 `_store_facts_to_reme()` 只提取非 `[USER]`/`[SOUL]`/`[SKIP]` 的行，但 `dream_phase1.md` 模板只定义了这三个标签，所以 LLM 不会输出知识类内容。
+
+**两种改进方案**：
+
+| 方案 | 说明 | 改造量 |
+|------|------|--------|
+| A: 添加 KNOWLEDGE 分类 | Phase 1 新增 `[KNOWLEDGE]` 标签 | 需改模板 + 方法 |
+| B: 全量写入 ReMe | 所有 `[USER]`/`[SOUL]` 内容也写入 ReMe | ~5 行代码 |
+
+**方案 B 优势**：
+- 不修改模板
+- 不修改文件编辑逻辑
+- 用户偏好也能通过 `retrieve_memory` 检索
+- 完全向后兼容
+
+---
+
+### 文件变更汇总（2026-04-09）
+
+| 文件 | 操作 | 修改内容 |
+|------|------|---------|
+| `nanobot/agent/context.py` | 修改 | `_get_memory_content()` 返回空 |
+| `nanobot/templates/agent/identity.md` | 修改 | 移除 MEMORY.md 引用 |
+| `nanobot/skills/memory/SKILL.md` | 修改 | 移除 MEMORY.md，添加 ReMe 工具说明 |
+| `nanobot/templates/agent/dream_phase1.md` | 修改 | 只处理 USER/SOUL |
+| `nanobot/agent/memory.py` | 修改 | Dream 添加 reme_adapter 和 `_store_facts_to_reme()` |
+| `nanobot/agent/loop.py` | 修改 | Dream 创建时传入 reme_adapter |
+| `nanobot/command/builtin.py` | 修改 | `/new` 命令改用 `archive_with_reme()` |
+| `AGENTS.md` (workspace) | 修改 | 清理虚构的每日流水账 |
