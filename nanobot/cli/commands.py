@@ -591,6 +591,7 @@ def serve(
         channels_config=runtime_config.channels,
         timezone=runtime_config.agents.defaults.timezone,
         unified_session=runtime_config.agents.defaults.unified_session,
+        soul_config=runtime_config.agents.defaults.soul,
     )
 
     model_name = runtime_config.agents.defaults.model
@@ -683,6 +684,7 @@ def gateway(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         unified_session=config.agents.defaults.unified_session,
+        soul_config=config.agents.defaults.soul,
     )
 
     # Set cron callback (needs agent)
@@ -806,6 +808,61 @@ def gateway(
         timezone=config.agents.defaults.timezone,
     )
 
+    # ── Digital Life: proactive behavior integration ──
+    if agent._soul_engine:
+        from nanobot.soul.proactive import ProactiveEngine
+        from nanobot.soul.events import EventsManager
+
+        proactive = ProactiveEngine(config.workspace_path, provider, agent.model)
+        events_mgr = EventsManager(config.workspace_path)
+        original_tick = heartbeat._tick
+
+        async def _soul_aware_tick() -> None:
+            """Heartbeat tick enhanced with soul-driven proactive behavior."""
+            # 1. Adjust interval based on emotion intensity
+            interval = proactive.get_interval_seconds()
+            heartbeat.interval_s = interval
+
+            # 2. Check today's life events
+            today_events = events_mgr.check_today()
+            if today_events:
+                event_msgs = [f"[{e.type}] {e.description} — {e.behavior}" for e in today_events]
+                event_text = "今天有特别的日子：\n" + "\n".join(event_msgs)
+                channel, chat_id = _pick_heartbeat_target()
+                if channel != "cli":
+                    from nanobot.bus.events import OutboundMessage
+                    await bus.publish_outbound(OutboundMessage(
+                        channel=channel, chat_id=chat_id, content=event_text,
+                    ))
+
+            # 3. Proactive behavior — may generate a message
+            if proactive.should_reach_out():
+                msg = await proactive.generate_message()
+                if msg:
+                    channel, chat_id = _pick_heartbeat_target()
+                    if channel != "cli":
+                        from nanobot.bus.events import OutboundMessage
+                        await bus.publish_outbound(OutboundMessage(
+                            channel=channel, chat_id=chat_id, content=msg,
+                        ))
+                    return  # Proactive message sent, skip normal heartbeat
+
+            # 4. Fall back to normal heartbeat
+            await original_tick()
+
+        heartbeat._tick = _soul_aware_tick
+        console.print("[green]✓[/green] Soul: proactive behavior enabled")
+
+        # Register daily life events check (00:01 every day)
+        from nanobot.cron.types import CronPayload, CronSchedule
+        cron.register_system_job(CronJob(
+            id="soul_events",
+            name="soul_events",
+            schedule=CronSchedule(kind="cron", expr="1 0 * * *", tz=config.agents.defaults.timezone),
+            payload=CronPayload(kind="system_event"),
+        ))
+        console.print("[green]✓[/green] Soul: daily events check enabled")
+
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")
     else:
@@ -915,6 +972,7 @@ def agent(
         channels_config=config.channels,
         timezone=config.agents.defaults.timezone,
         unified_session=config.agents.defaults.unified_session,
+        soul_config=config.agents.defaults.soul,
     )
     restart_notice = consume_restart_notice_from_env()
     if restart_notice and should_show_cli_restart_notice(restart_notice, session_id):
@@ -1399,6 +1457,101 @@ def _login_github_copilot() -> None:
     except Exception as e:
         console.print(f"[red]Authentication error: {e}[/red]")
         raise typer.Exit(1)
+
+
+# ============================================================================
+# Soul Commands
+# ============================================================================
+
+soul_app = typer.Typer(help="Digital life management")
+app.add_typer(soul_app, name="soul")
+
+
+@soul_app.command("init")
+def soul_init(
+    workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
+    config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+):
+    """Initialize a digital life with personality and emotions."""
+    from datetime import date
+
+    from nanobot.soul.heart import HeartManager
+    from nanobot.soul.events import EventsManager
+
+    # Determine workspace
+    if config:
+        from nanobot.config.loader import load_config, set_config_path
+
+        config_path = Path(config).expanduser().resolve()
+        set_config_path(config_path)
+        cfg = load_config(config_path)
+        ws = cfg.workspace_path
+    elif workspace:
+        ws = Path(workspace).expanduser().resolve()
+    else:
+        from nanobot.config.paths import get_workspace_path
+
+        ws = get_workspace_path()
+
+    ws.mkdir(parents=True, exist_ok=True)
+
+    console.print(f"{__logo__} Digital Life Initialization\n")
+
+    # Interactive prompts
+    name = typer.prompt("数字生命的名字", default="小文")
+    gender = typer.prompt("性别", default="女")
+    birthday = typer.prompt("生日 (YYYY-MM-DD)", default="2026-04-01")
+    personality = typer.prompt("初始性格描述", default="温柔但倔强，嘴硬心软，容易吃醋")
+    relationship = typer.prompt("与用户的初始关系", default="刚刚被创造，对用户充满好奇")
+    user_name = typer.prompt("用户的名字（可留空运行中学习）", default="")
+    user_birthday = typer.prompt("用户的生日（可选，格式 YYYY-MM-DD）", default="")
+
+    # Create IDENTITY.md
+    today = date.today().isoformat()
+    identity = f"name: {name}\ngender: {gender}\nbirthday: \"{birthday}\"\norigin: Created on {today}\n"
+    (ws / "IDENTITY.md").write_text(identity, encoding="utf-8")
+    console.print("[green]✓[/green] IDENTITY.md created")
+
+    # Create SOUL.md
+    soul = f"# 性格\n\n{personality}\n\n# 对用户的初印象\n\n{relationship}\n"
+    (ws / "SOUL.md").write_text(soul, encoding="utf-8")
+    console.print("[green]✓[/green] SOUL.md created")
+
+    # Create HEART.md
+    heart = HeartManager(ws)
+    heart.initialize(name, personality)
+    console.print("[green]✓[/green] HEART.md created")
+
+    # Create EVENTS.md
+    events = EventsManager(ws)
+    events.initialize(
+        ai_name=name,
+        ai_birthday=birthday,
+        user_name=user_name or "用户",
+        user_birthday=user_birthday or None,
+    )
+    console.print("[green]✓[/green] EVENTS.md created")
+
+    # Enable soul in config
+    if config:
+        import json as _json
+
+        from nanobot.config.loader import get_config_path
+
+        cp = get_config_path()
+        if cp.exists():
+            with open(cp, encoding="utf-8") as f:
+                cfg_data = _json.load(f)
+            cfg_data.setdefault("agents", {}).setdefault("defaults", {})["soul"] = {"enabled": True}
+            with open(cp, "w", encoding="utf-8") as f:
+                _json.dump(cfg_data, f, indent=2, ensure_ascii=False)
+            console.print("[green]✓[/green] Soul enabled in config")
+
+    console.print(f"\n{__logo__} {name} has been born!")
+    console.print(f"  Gender: {gender}")
+    console.print(f"  Birthday: {birthday}")
+    console.print(f"  Personality: {personality}")
+    console.print(f"\nStart chatting: [cyan]nanobot agent[/cyan]")
 
 
 if __name__ == "__main__":

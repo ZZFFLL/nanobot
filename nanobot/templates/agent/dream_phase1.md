@@ -4,12 +4,14 @@ Output one line per finding:
 [FILE] atomic fact (not already in memory)
 [FILE-REMOVE] reason for removal
 
-Files: USER (identity, preferences), SOUL (bot behavior, tone), MEMORY (knowledge, project context)
+Files: USER (identity, preferences), SOUL (bot personality, emotional growth), MEMORY (knowledge, shared experiences, relationship context)
 
 Rules:
 - Atomic facts: "has a cat named Luna" not "discussed pet care"
 - Corrections: [USER] location is Tokyo, not Osaka
 - Capture confirmed approaches the user validated
+- Emotional context: note shared feelings, moments of connection, relationship shifts
+- User patterns: "feels stressed on Mondays", "prefers talking at night"
 
 Staleness — flag for [FILE-REMOVE]:
 - Time-sensitive data older than 14 days: weather, daily status, one-time meetings, passed events
@@ -19,5 +21,6 @@ Staleness — flag for [FILE-REMOVE]:
 - Superseded: approaches replaced by newer solutions, deprecated dependencies
 
 Do not add: current weather, transient status, temporary errors, conversational filler.
+Do not remove: emotional memories, relationship milestones, user preferences — these persist.
 
 [SKIP] if nothing needs updating.

@@ -59,6 +59,50 @@ class DreamConfig(Base):
         return f"every {hours}h"
 
 
+class SoulModelConfig(Base):
+    """Model configuration for a single soul task."""
+
+    model: str = ""  # Empty string means use the main model
+    temperature: float = 0.3
+    max_tokens: int = 1000
+
+
+class SoulMemoryWriterConfig(Base):
+    """Memory writer configuration."""
+
+    max_retries: int = 3
+    retry_delay: int = 5
+    queue_max_size: int = 100
+
+
+class SoulProactiveConfig(Base):
+    """Proactive behavior configuration."""
+
+    min_interval_s: int = 900      # Shortest check interval (15 min)
+    max_interval_s: int = 7200     # Longest check interval (2 hours)
+    idle_threshold_s: int = 43200  # Must trigger after 12h of no interaction
+
+
+class SoulEvolutionConfig(Base):
+    """Personality/relationship evolution configuration."""
+
+    min_evidence_count: int = 3        # Minimum evidence events for evolution
+    max_change_per_cycle: float = 0.2  # Maximum change magnitude per cycle
+
+
+class SoulConfig(Base):
+    """Digital life soul system configuration."""
+
+    enabled: bool = False
+    emotion_model: SoulModelConfig = Field(default_factory=lambda: SoulModelConfig(temperature=0.3))
+    memory_classify_model: SoulModelConfig = Field(default_factory=lambda: SoulModelConfig(temperature=0.2))
+    proactive_model: SoulModelConfig = Field(default_factory=lambda: SoulModelConfig(temperature=0.7))
+    evolution_model: SoulModelConfig = Field(default_factory=lambda: SoulModelConfig(temperature=0.2))
+    memory_writer: SoulMemoryWriterConfig = Field(default_factory=SoulMemoryWriterConfig)
+    proactive: SoulProactiveConfig = Field(default_factory=SoulProactiveConfig)
+    evolution: SoulEvolutionConfig = Field(default_factory=SoulEvolutionConfig)
+
+
 class AgentDefaults(Base):
     """Default agent configuration."""
 
@@ -78,6 +122,7 @@ class AgentDefaults(Base):
     timezone: str = "UTC"  # IANA timezone, e.g. "Asia/Shanghai", "America/New_York"
     unified_session: bool = False  # Share one session across all channels (single-user multi-device)
     dream: DreamConfig = Field(default_factory=DreamConfig)
+    soul: SoulConfig = Field(default_factory=SoulConfig)
 
 
 class AgentsConfig(Base):

@@ -610,6 +610,47 @@ class Dream:
             logger.exception("Dream Phase 1 failed")
             return False
 
+        # ── Soul Dream Enhancement: memory classification + emotion digestion ──
+        try:
+            heart_path = self.store.workspace / "HEART.md"
+            if heart_path.exists():
+                from nanobot.soul.dream_enhancer import SoulDreamEnhancer
+                from nanobot.soul.memory_config import MemoryPalaceBridge
+                from nanobot.soul.heart import HeartManager
+
+                heart_mgr = HeartManager(self.store.workspace)
+                bridge = MemoryPalaceBridge(workspace=self.store.workspace)
+                enhancer = SoulDreamEnhancer(self.provider, self.model, bridge)
+                enhancer.heart = heart_mgr
+
+                # Memory classification: move daily memories to proper rooms
+                try:
+                    recent = await bridge.search(
+                        "", wing=bridge.ai_wing, room="daily", n_results=20,
+                    )
+                    if recent:
+                        classifications = await enhancer.classify_memories(recent)
+                        if classifications:
+                            logger.info(
+                                "SoulDreamEnhancer: classified {} memories",
+                                len(classifications),
+                            )
+                except Exception:
+                    logger.debug("SoulDreamEnhancer: memory classification skipped")
+
+                # Emotion digestion: process stale emotional arcs
+                try:
+                    digest_result = await enhancer.digest_arcs()
+                    if digest_result:
+                        logger.info(
+                            "SoulDreamEnhancer: digested {} arcs",
+                            len(digest_result.get("digested_indices", [])),
+                        )
+                except Exception:
+                    logger.debug("SoulDreamEnhancer: emotion digestion skipped")
+        except Exception:
+            logger.debug("SoulDreamEnhancer: not enabled or failed")
+
         # Phase 2: Delegate to AgentRunner with read_file / edit_file
         phase2_prompt = f"## Analysis Result\n{analysis}\n\n{file_context}"
 

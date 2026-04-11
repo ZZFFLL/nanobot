@@ -30,7 +30,7 @@ from nanobot.agent.tools.web import WebFetchTool, WebSearchTool
 from nanobot.bus.events import InboundMessage, OutboundMessage
 from nanobot.command import CommandContext, CommandRouter, register_builtin_commands
 from nanobot.bus.queue import MessageBus
-from nanobot.config.schema import AgentDefaults
+from nanobot.config.schema import AgentDefaults, SoulConfig
 from nanobot.providers.base import LLMProvider
 from nanobot.session.manager import Session, SessionManager
 from nanobot.utils.helpers import image_placeholder_text, truncate_text
@@ -147,6 +147,7 @@ class AgentLoop:
         timezone: str | None = None,
         hooks: list[AgentHook] | None = None,
         unified_session: bool = False,
+        soul_config: SoulConfig | None = None,
     ):
         from nanobot.config.schema import ExecToolConfig, WebToolsConfig
 
@@ -178,6 +179,17 @@ class AgentLoop:
         self._start_time = time.time()
         self._last_usage: dict[str, int] = {}
         self._extra_hooks: list[AgentHook] = hooks or []
+
+        # Soul system Hook — activated when HEART.md exists in workspace
+        self._soul_engine = None
+        try:
+            if (workspace / "HEART.md").exists():
+                from nanobot.soul.engine import SoulEngine, SoulHook
+                self._soul_engine = SoulEngine(workspace, provider, self.model, soul_config=soul_config)
+                self._extra_hooks.append(SoulHook(self._soul_engine))
+                logger.info("SoulEngine: soul system activated")
+        except Exception:
+            logger.debug("SoulEngine: soul system not enabled")
 
         self.context = ContextBuilder(workspace, timezone=timezone)
         self.sessions = session_manager or SessionManager(workspace)

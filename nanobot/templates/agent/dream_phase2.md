@@ -5,6 +5,7 @@ Update memory files based on the analysis below.
 ## File paths (relative to workspace root)
 - SOUL.md
 - USER.md
+- HEART.md (emotional state — only update trends and digested arcs)
 - memory/MEMORY.md
 
 Do NOT guess paths.
@@ -16,9 +17,11 @@ Do NOT guess paths.
 - For deletions: section header + all bullets as old_text, new_text empty
 - Surgical edits only — never rewrite entire files
 - If nothing to update, stop without calling tools
+- HEART.md: only update 情绪趋势 and merge digested arcs into relationship status
 
 ## Quality
 - Every line must carry standalone value
 - Concise bullets under clear headers
 - When reducing (not deleting): keep essential facts, drop verbose details
 - If uncertain whether to delete, keep but add "(verify currency)"
+- Preserve emotional context — a fact like "user was sad that day" is as important as "user has a cat"
