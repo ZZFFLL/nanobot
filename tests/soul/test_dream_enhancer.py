@@ -84,149 +84,170 @@ class TestMemoryClassification:
 class TestEmotionDigestion:
 
     async def test_digest_arcs(self, enhancer, mock_provider, tmp_path):
-        """Should digest emotional arcs from HEART.md."""
+        """Should digest emotional arcs from HEART.md — returns True on success."""
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(tmp_path)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [
-                {"时间": "3天前", "事件": "吵架", "影响": "很生气"},
-                {"时间": "1周前", "事件": "用户道歉", "影响": "气消了一些"},
-            ],
-            "情绪趋势": "恢复中",
-            "当前渴望": "想和好",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n"
+            "- 3天前：吵架 → 很生气\n"
+            "- 1周前：用户道歉 → 气消了一些\n\n"
+            "## 情绪趋势\n恢复中\n\n"
+            "## 当前渴望\n想和好\n"
+        )
         enhancer.heart = hm
 
         mock_provider.chat_with_retry.return_value = MagicMock(
-            content=json.dumps({
-                "digested_indices": [0],
-                "updated_arcs": [{"时间": "1周前", "事件": "用户道歉", "影响": "气消了一些，但还没完全好"}],
-                "relationship_update": "吵架后用户主动道歉，关系有所修复",
-            })
+            content=(
+                "## 当前情绪\n平静\n\n"
+                "## 情绪强度\n中偏低\n\n"
+                "## 关系状态\n吵架后用户主动道歉，关系有所修复\n\n"
+                "## 性格表现\n温柔\n\n"
+                "## 情感脉络\n- 1周前：用户道歉 → 气消了一些，但还没完全好\n\n"
+                "## 情绪趋势\n恢复中\n\n"
+                "## 当前渴望\n想和好\n"
+            )
         )
 
         result = await enhancer.digest_arcs()
-        assert result is not None
-        assert 0 in result["digested_indices"]
-        assert result["relationship_update"] == "吵架后用户主动道歉，关系有所修复"
+        assert result is True
+        updated = hm.read_text()
+        assert "修复" in updated
 
     async def test_digest_no_arcs(self, enhancer, mock_provider, tmp_path):
-        """No arcs → skip digestion, return None."""
+        """No arcs — LLM still runs, may return unchanged or slightly adjusted content."""
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(tmp_path)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
         enhancer.heart = hm
+
+        # LLM returns the same content unchanged (no arcs to digest)
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content=hm.read_text()
+        )
+
         result = await enhancer.digest_arcs()
-        assert result is None
+        # digest_arcs calls LLM even with no arcs; returns True if LLM outputs valid markdown
+        assert result is True
 
     async def test_digest_no_heart(self, enhancer):
-        """No heart manager → return None."""
+        """No heart manager → return False."""
         result = await enhancer.digest_arcs()
-        assert result is None
+        assert result is False
 
     async def test_digest_applies_to_heart(self, enhancer, mock_provider, tmp_path):
-        """Digestion should update HEART.md."""
+        """Digestion should update HEART.md with Markdown content."""
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(tmp_path)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [
-                {"时间": "5天前", "事件": "用户很晚才来", "影响": "有点难过"},
-            ],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 5天前：用户很晚才来 → 有点难过\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
         enhancer.heart = hm
 
         mock_provider.chat_with_retry.return_value = MagicMock(
-            content=json.dumps({
-                "digested_indices": [0],
-                "updated_arcs": [],
-                "relationship_update": "虽然有过失望但已经释然",
-                "personality_update": "更加包容",
-            })
+            content=(
+                "## 当前情绪\n释然\n\n"
+                "## 情绪强度\n低\n\n"
+                "## 关系状态\n虽然有过失望但已经释然\n\n"
+                "## 性格表现\n更加包容\n\n"
+                "## 情感脉络\n（暂无）\n\n"
+                "## 情绪趋势\n平稳\n\n"
+                "## 当前渴望\n无\n"
+            )
         )
 
-        await enhancer.digest_arcs()
-        updated = hm.read()
-        assert "释然" in updated["关系状态"]
-        assert "包容" in updated["性格表现"]
-        # Digested arc should be removed
-        assert len(updated["情感脉络"]) == 0
-
-    async def test_digest_invalid_json_returns_none(self, enhancer, mock_provider, tmp_path):
-        """Invalid JSON from LLM returns None."""
-        from nanobot.soul.heart import HeartManager
-        hm = HeartManager(tmp_path)
-        hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [{"时间": "1天前", "事件": "小事", "影响": "轻微波动"}],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
-        enhancer.heart = hm
-
-        mock_provider.chat_with_retry.return_value = MagicMock(content="not json")
         result = await enhancer.digest_arcs()
-        assert result is None
+        assert result is True
+        updated = hm.read_text()
+        assert "释然" in updated
+        assert "包容" in updated
 
-    async def test_digest_respects_max_8_arcs(self, enhancer, mock_provider, tmp_path):
-        """After digestion, arcs should not exceed 8."""
+    async def test_digest_invalid_output_returns_false(self, enhancer, mock_provider, tmp_path):
+        """LLM output without ## headers → return False, don't update heart."""
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(tmp_path)
         hm.initialize("小文", "温柔")
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 1天前：小事 → 轻微波动\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
+        enhancer.heart = hm
+        old_text = hm.read_text()
 
-        # Create 6 arcs, digest none, but LLM returns 10 updated_arcs
-        arcs = [{"时间": f"{i}天前", "事件": f"事件{i}", "影响": f"影响{i}"} for i in range(6)]
-        hm.write({
-            "当前情绪": "复杂",
-            "情绪强度": "中偏高",
-            "关系状态": "复杂",
-            "性格表现": "温柔",
-            "情感脉络": arcs,
-            "情绪趋势": "波动",
-            "当前渴望": "稳定",
-        })
+        mock_provider.chat_with_retry.return_value = MagicMock(content="not markdown output")
+        result = await enhancer.digest_arcs()
+        assert result is False
+        assert hm.read_text() == old_text
+
+    async def test_digest_empty_output_returns_false(self, enhancer, mock_provider, tmp_path):
+        """Empty LLM output → return False."""
+        from nanobot.soul.heart import HeartManager
+        hm = HeartManager(tmp_path)
+        hm.initialize("小文", "温柔")
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 1天前：小事 → 轻微波动\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
         enhancer.heart = hm
 
-        # Return 10 updated arcs (exceeds 8 limit)
-        too_many_arcs = [{"时间": f"{i}天前", "事件": f"更新{i}", "影响": f"更新影响{i}"} for i in range(10)]
-        mock_provider.chat_with_retry.return_value = MagicMock(
-            content=json.dumps({
-                "digested_indices": [],
-                "updated_arcs": too_many_arcs,
-                "relationship_update": "",
-            })
-        )
+        mock_provider.chat_with_retry.return_value = MagicMock(content="")
+        result = await enhancer.digest_arcs()
+        assert result is False
 
-        await enhancer.digest_arcs()
-        updated = hm.read()
-        assert len(updated["情感脉络"]) <= 8
+    async def test_digest_llm_failure_returns_false(self, enhancer, mock_provider, tmp_path):
+        """LLM call failure returns False."""
+        from nanobot.soul.heart import HeartManager
+        hm = HeartManager(tmp_path)
+        hm.initialize("小文", "温柔")
+        hm.write_text(
+            "## 当前情绪\n复杂\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n复杂\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 1天前：事件 → 影响\n\n"
+            "## 情绪趋势\n波动\n\n"
+            "## 当前渴望\n想稳定\n"
+        )
+        enhancer.heart = hm
+
+        mock_provider.chat_with_retry.side_effect = Exception("API error")
+        result = await enhancer.digest_arcs()
+        assert result is False
 
 
 class TestExtractJson:
+
+    """_extract_json is still used by classify_memories for JSON extraction."""
 
     def test_extract_raw_json_array(self):
         """Should extract raw JSON array."""

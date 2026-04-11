@@ -33,9 +33,17 @@ class TestSoulEngine:
 
     async def test_after_iteration_updates_heart(self, engine, mock_provider):
         engine.initialize("小文", "测试")
-        # Simulate LLM returning valid JSON
-        valid_json = '{"当前情绪":"开心","情绪强度":"中","关系状态":"好奇","性格表现":"温柔","情感脉络":[],"情绪趋势":"平稳","当前渴望":"想聊天"}'
-        mock_provider.chat_with_retry.return_value = MagicMock(content=valid_json)
+        # Simulate LLM returning valid Markdown
+        valid_markdown = (
+            "## 当前情绪\n开心\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n好奇\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n想聊天\n"
+        )
+        mock_provider.chat_with_retry.return_value = MagicMock(content=valid_markdown)
 
         context = MagicMock()
         context.messages = [
@@ -48,15 +56,16 @@ class TestSoulEngine:
         hook = SoulHook(engine)
         await hook.after_iteration(context)
 
-        data = engine.heart.read()
-        assert data is not None
-        assert data["当前情绪"] == "开心"
+        text = engine.heart.read_text()
+        assert text is not None
+        assert "开心" in text
 
-    async def test_after_iteration_invalid_json_keeps_old(self, engine, mock_provider):
+    async def test_after_iteration_empty_output_keeps_old(self, engine, mock_provider):
         engine.initialize("小文", "测试")
-        old_data = engine.heart.read()
+        old_text = engine.heart.read_text()
 
-        mock_provider.chat_with_retry.return_value = MagicMock(content="这不是JSON")
+        # LLM returns empty string
+        mock_provider.chat_with_retry.return_value = MagicMock(content="")
 
         context = MagicMock()
         context.messages = []
@@ -66,8 +75,8 @@ class TestSoulEngine:
         hook = SoulHook(engine)
         await hook.after_iteration(context)
 
-        new_data = engine.heart.read()
-        assert new_data["当前情绪"] == old_data["当前情绪"]
+        new_text = engine.heart.read_text()
+        assert new_text == old_text
 
     async def test_before_iteration_injects_context(self, engine):
         engine.initialize("小文", "测试")
@@ -81,25 +90,47 @@ class TestSoulEngine:
         system_msg = context.messages[0]
         assert "情绪" in system_msg["content"]
 
-    async def test_update_heart_with_code_block_json(self, engine, mock_provider):
+    async def test_update_heart_markdown_output(self, engine, mock_provider):
         engine.initialize("小文", "测试")
-        code_block_json = '```json\n{"当前情绪":"感动","情绪强度":"中偏高","关系状态":"开始信任","性格表现":"温柔","情感脉络":[{"时间":"刚刚","事件":"用户很关心","影响":"很感动"}],"情绪趋势":"上升","当前渴望":"想多说说话"}\n```'
-        mock_provider.chat_with_retry.return_value = MagicMock(content=code_block_json)
+        markdown_output = (
+            "## 当前情绪\n感动\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n开始信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 刚刚：用户很关心 → 很感动\n\n"
+            "## 情绪趋势\n上升\n\n"
+            "## 当前渴望\n想多说说话\n"
+        )
+        mock_provider.chat_with_retry.return_value = MagicMock(content=markdown_output)
 
         result = await engine.update_heart("你还好吗", "我很好呀")
         assert result is True
-        data = engine.heart.read()
-        assert data["当前情绪"] == "感动"
+        text = engine.heart.read_text()
+        assert "感动" in text
 
     async def test_update_heart_llm_failure_keeps_old(self, engine, mock_provider):
         engine.initialize("小文", "测试")
-        old_data = engine.heart.read()
+        old_text = engine.heart.read_text()
 
         mock_provider.chat_with_retry.side_effect = Exception("API error")
 
         result = await engine.update_heart("你好", "嗨")
         assert result is False
-        assert engine.heart.read()["当前情绪"] == old_data["当前情绪"]
+        assert engine.heart.read_text() == old_text
+
+    async def test_update_heart_rejects_non_markdown(self, engine, mock_provider):
+        """LLM output without ## headers should be rejected."""
+        engine.initialize("小文", "测试")
+        old_text = engine.heart.read_text()
+
+        # LLM returns plain text without section headers
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="I feel happy today"
+        )
+
+        result = await engine.update_heart("你好", "嗨")
+        assert result is False
+        assert engine.heart.read_text() == old_text
 
     async def test_before_iteration_no_heart_does_nothing(self, workspace, mock_provider):
         engine = SoulEngine(workspace, mock_provider, "test-model")
@@ -172,8 +203,16 @@ class TestSoulEngine:
         mock_writer.write_dual = AsyncMock()
         engine._memory_writer = mock_writer
 
-        valid_json = '{"当前情绪":"开心","情绪强度":"中","关系状态":"好奇","性格表现":"温柔","情感脉络":[],"情绪趋势":"平稳","当前渴望":"想聊天"}'
-        mock_provider.chat_with_retry.return_value = MagicMock(content=valid_json)
+        valid_markdown = (
+            "## 当前情绪\n开心\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n好奇\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n想聊天\n"
+        )
+        mock_provider.chat_with_retry.return_value = MagicMock(content=valid_markdown)
 
         context = MagicMock()
         context.messages = [

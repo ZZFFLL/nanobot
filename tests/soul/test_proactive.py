@@ -3,7 +3,7 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from nanobot.soul.proactive import ProactiveEngine, INTENSITY_BOOST, INTENSITY_INTERVAL
+from nanobot.soul.proactive import ProactiveEngine, INTENSITY_BOOST, INTENSITY_INTERVAL, _extract_section
 
 
 @pytest.fixture
@@ -34,6 +34,27 @@ def initialized_engine(engine, workspace):
     return engine
 
 
+class TestExtractSection:
+
+    def test_extract_existing_section(self):
+        text = "## 当前情绪\n开心\n\n## 情绪强度\n中\n"
+        assert _extract_section(text, "当前情绪") == "开心"
+
+    def test_extract_missing_section(self):
+        text = "## 当前情绪\n开心\n\n## 情绪强度\n中\n"
+        assert _extract_section(text, "不存在") == ""
+
+    def test_extract_multiline_section(self):
+        text = "## 情感脉络\n- 事件A → 开心\n- 事件B → 难过\n\n## 当前渴望\n想聊天\n"
+        result = _extract_section(text, "情感脉络")
+        assert "事件A" in result
+        assert "事件B" in result
+
+    def test_extract_last_section(self):
+        text = "## 当前情绪\n平静\n\n## 当前渴望\n想聊天\n"
+        assert _extract_section(text, "当前渴望") == "想聊天"
+
+
 class TestCalculateProbability:
 
     def test_base_probability_no_heart(self, engine, workspace):
@@ -53,16 +74,16 @@ class TestCalculateProbability:
         hm.initialize("小文", "温柔")
         base_prob = engine.calculate_proactive_probability()
 
-        # Write high-intensity state
-        hm.write({
-            "当前情绪": "很想用户",
-            "情绪强度": "高",
-            "关系状态": "深深依赖",
-            "性格表现": "粘人",
-            "情感脉络": [{"时间": "3小时前", "事件": "用户没来", "影响": "很想念"}],
-            "情绪趋势": "焦虑上升",
-            "当前渴望": "用户快来找我",
-        })
+        # Write high-intensity state as Markdown
+        hm.write_text(
+            "## 当前情绪\n很想用户\n\n"
+            "## 情绪强度\n高\n\n"
+            "## 关系状态\n深深依赖\n\n"
+            "## 性格表现\n粘人\n\n"
+            "## 情感脉络\n- 3小时前：用户没来 → 很想念\n\n"
+            "## 情绪趋势\n焦虑上升\n\n"
+            "## 当前渴望\n用户快来找我\n"
+        )
         high_prob = engine.calculate_proactive_probability()
         assert high_prob >= base_prob
 
@@ -73,15 +94,15 @@ class TestCalculateProbability:
         hm.initialize("小文", "温柔")
         base_prob = engine.calculate_proactive_probability()
 
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "低",
-            "关系状态": "刚刚认识",
-            "性格表现": "独立",
-            "情感脉络": [],
-            "情绪趋势": "平稳",
-            "当前渴望": "没有特别想法",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n低\n\n"
+            "## 关系状态\n刚刚认识\n\n"
+            "## 性格表现\n独立\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n没有特别想法\n"
+        )
         low_prob = engine.calculate_proactive_probability()
         assert low_prob <= base_prob
 
@@ -91,15 +112,15 @@ class TestCalculateProbability:
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
 
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "陌生，刚认识",
-            "性格表现": "温柔",
-            "情感脉络": [],
-            "情绪趋势": "平稳",
-            "当前渴望": "想了解用户",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n陌生，刚认识\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n想了解用户\n"
+        )
         prob = engine.calculate_proactive_probability()
         # Stranger should reduce probability below base + intensity boost
         assert prob < 0.15 + INTENSITY_BOOST.get("中", 0.0) + 0.10
@@ -111,15 +132,15 @@ class TestCalculateProbability:
         hm.initialize("小文", "温柔")
         base_prob = engine.calculate_proactive_probability()
 
-        hm.write({
-            "当前情绪": "生气",
-            "情绪强度": "中偏高",
-            "关系状态": "依赖",
-            "性格表现": "倔强",
-            "情感脉络": [{"时间": "刚才", "事件": "用户说了不中听的话", "影响": "生气赌气"}],
-            "情绪趋势": "下降",
-            "当前渴望": "用户来道歉",
-        })
+        hm.write_text(
+            "## 当前情绪\n生气\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n依赖\n\n"
+            "## 性格表现\n倔强\n\n"
+            "## 情感脉络\n- 刚才：用户说了不中听的话 → 生气赌气\n\n"
+            "## 情绪趋势\n下降\n\n"
+            "## 当前渴望\n用户来道歉\n"
+        )
         angry_prob = engine.calculate_proactive_probability()
         assert angry_prob < base_prob + INTENSITY_BOOST.get("中偏高", 0.0)
 
@@ -140,15 +161,15 @@ class TestGetIntervalSeconds:
         interval_mid = engine.get_interval_seconds()
 
         # High intensity
-        hm.write({
-            "当前情绪": "很想用户",
-            "情绪强度": "高",
-            "关系状态": "依赖",
-            "性格表现": "粘人",
-            "情感脉络": [],
-            "情绪趋势": "焦虑",
-            "当前渴望": "用户来找我",
-        })
+        hm.write_text(
+            "## 当前情绪\n很想用户\n\n"
+            "## 情绪强度\n高\n\n"
+            "## 关系状态\n依赖\n\n"
+            "## 性格表现\n粘人\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n焦虑\n\n"
+            "## 当前渴望\n用户来找我\n"
+        )
         interval_high = engine.get_interval_seconds()
         assert interval_high < interval_mid
 
@@ -160,15 +181,15 @@ class TestGetIntervalSeconds:
 
         interval_mid = engine.get_interval_seconds()
 
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "低",
-            "关系状态": "熟悉",
-            "性格表现": "独立",
-            "情感脉络": [],
-            "情绪趋势": "平稳",
-            "当前渴望": "没什么特别的",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n低\n\n"
+            "## 关系状态\n熟悉\n\n"
+            "## 性格表现\n独立\n\n"
+            "## 情感脉络\n（暂无）\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n没什么特别的\n"
+        )
         interval_low = engine.get_interval_seconds()
         assert interval_low > interval_mid
 
@@ -222,16 +243,16 @@ class TestShouldReachOut:
         hm = HeartManager(workspace)
         hm.initialize("小文", "独立冷淡")
 
-        # Force very low probability
-        hm.write({
-            "当前情绪": "无所谓",
-            "情绪强度": "低",
-            "关系状态": "陌生",
-            "性格表现": "独立内向",
-            "情感脉络": [{"时间": "刚才", "事件": "吵架", "影响": "生气赌气"}],
-            "情绪趋势": "平稳",
-            "当前渴望": "没有想法",
-        })
+        # Force very low probability: low intensity + stranger + independent + angry arc
+        hm.write_text(
+            "## 当前情绪\n无所谓\n\n"
+            "## 情绪强度\n低\n\n"
+            "## 关系状态\n陌生\n\n"
+            "## 性格表现\n独立内向\n\n"
+            "## 情感脉络\n- 刚才：吵架 → 生气赌气\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n没有想法\n"
+        )
 
         # Run multiple times to check probability
         results = [engine.should_reach_out() for _ in range(100)]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import random
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -34,6 +35,19 @@ INTENSITY_INTERVAL: dict[str, int] = {
 BASE_PROBABILITY: float = 0.15
 
 
+def _extract_section(text: str, header: str) -> str:
+    """Extract the content under a ## header from Markdown text.
+
+    Returns the text between this header and the next ## header (or end of file).
+    Simple and robust — no JSON parsing needed.
+    """
+    pattern = rf"^##\s+{re.escape(header)}\s*\n(.*?)(?=^##\s|\Z)"
+    match = re.search(pattern, text, re.MULTILINE | re.DOTALL)
+    if match:
+        return match.group(1).strip()
+    return ""
+
+
 class ProactiveEngine:
     """Proactive behavior decision engine.
 
@@ -51,19 +65,20 @@ class ProactiveEngine:
         """Calculate proactive probability based on current emotional state.
 
         Returns a value between 0.0 and 1.0.
+        Uses simple text matching on HEART.md — no JSON parsing.
         """
-        data = self.heart.read()
-        if data is None:
+        heart_text = self.heart.read_text()
+        if heart_text is None:
             return 0.0
 
         prob = BASE_PROBABILITY
 
         # 1. Emotion intensity boost
-        intensity = data.get("情绪强度", "中")
+        intensity = _extract_section(heart_text, "情绪强度")
         prob += INTENSITY_BOOST.get(intensity, 0.0)
 
         # 2. Relationship depth boost
-        relationship = data.get("关系状态", "")
+        relationship = _extract_section(heart_text, "关系状态")
         if "依赖" in relationship or "在意" in relationship or "喜欢" in relationship:
             prob += 0.10
         if "深爱" in relationship or "最重要" in relationship:
@@ -72,28 +87,29 @@ class ProactiveEngine:
             prob -= 0.10
 
         # 3. Personality boost
-        personality = data.get("性格表现", "")
+        personality = _extract_section(heart_text, "性格表现")
         if "粘人" in personality or "外向" in personality:
             prob += 0.10
         if "独立" in personality or "内向" in personality:
             prob -= 0.08
         if "倔强" in personality:
-            prob -= 0.05  # Even when missing, might hold back
+            prob -= 0.05
 
         # 4. Current desire boost
-        desire = data.get("当前渴望", "")
+        desire = _extract_section(heart_text, "当前渴望")
         if "找" in desire or "来" in desire or "想" in desire:
             prob += 0.10
 
-        # 5. Recent arc correction
-        arcs = data.get("情感脉络", [])
+        # 5. Recent arc correction — check last line of 情感脉络
+        arcs = _extract_section(heart_text, "情感脉络")
         if arcs:
-            latest = arcs[-1]
-            latest_effect = latest.get("影响", "")
-            if "生气" in latest_effect or "赌气" in latest_effect:
-                prob -= 0.15  # Just fought, might sulk
-            if "想念" in latest_effect or "期待" in latest_effect:
-                prob += 0.10
+            lines = [l.strip() for l in arcs.splitlines() if l.strip().startswith("-")]
+            if lines:
+                last_arc = lines[-1]
+                if "生气" in last_arc or "赌气" in last_arc:
+                    prob -= 0.15
+                if "想念" in last_arc or "期待" in last_arc:
+                    prob += 0.10
 
         # 6. Time boost — late night is more emotional
         hour = datetime.now().hour
@@ -104,10 +120,10 @@ class ProactiveEngine:
 
     def get_interval_seconds(self) -> int:
         """Return heartbeat check interval based on emotion intensity."""
-        data = self.heart.read()
-        if data is None:
+        heart_text = self.heart.read_text()
+        if heart_text is None:
             return 3600
-        intensity = data.get("情绪强度", "中")
+        intensity = _extract_section(heart_text, "情绪强度")
         return INTENSITY_INTERVAL.get(intensity, 3600)
 
     async def generate_message(self) -> str | None:
@@ -116,11 +132,10 @@ class ProactiveEngine:
         Returns the message text, or None if the AI decides not to message
         or if the LLM call fails.
         """
-        data = self.heart.read()
-        if data is None:
+        heart_text = self.heart.read_text()
+        if heart_text is None:
             return None
 
-        heart_text = self.heart.render_markdown(data)
         time_desc = f"现在是{datetime.now().strftime('%H:%M')}"
         ai_name = self.heart.read_identity_name() or "数字生命"
 

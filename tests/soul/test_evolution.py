@@ -4,7 +4,8 @@ import pytest
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
-from nanobot.soul.evolution import EvolutionEngine, EVOLUTION_PROMPT, SENSITIVITY_KEYWORDS
+from nanobot.soul.evolution import EvolutionEngine, EVOLUTION_PROMPT, SENSITIVITY_KEYWORDS, _count_arcs
+from nanobot.soul.proactive import _extract_section
 
 
 @pytest.fixture
@@ -24,6 +25,25 @@ def engine(workspace, mock_provider):
     return EvolutionEngine(workspace, mock_provider, "test-model")
 
 
+class TestCountArcs:
+
+    def test_count_bullet_lines(self):
+        text = "- 1天前：事件A → 影响A\n- 3天前：事件B → 影响B\n- 5天前：事件C → 影响C"
+        assert _count_arcs(text) == 3
+
+    def test_count_empty_section(self):
+        assert _count_arcs("（暂无）") == 0
+
+    def test_count_single_arc(self):
+        text = "- 刚刚：小事 → 轻微波动"
+        assert _count_arcs(text) == 1
+
+    def test_count_mixed_lines(self):
+        """Only lines starting with '- ' count as arcs."""
+        text = "一些描述\n- 事件A → 影响\n更多文字"
+        assert _count_arcs(text) == 1
+
+
 class TestCheckEvolution:
 
     async def test_no_evolution_without_evidence(self, engine, workspace):
@@ -31,15 +51,15 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [{"时间": "1天前", "事件": "单次事件", "影响": "轻微影响"}],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n- 1天前：单次事件 → 轻微影响\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
         result = await engine.check_evolution()
         assert result is None
 
@@ -53,19 +73,18 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [
-                {"时间": "1天前", "事件": "用户寻求安慰", "影响": "想去照顾"},
-                {"时间": "3天前", "事件": "用户倾诉烦恼", "影响": "心疼"},
-                {"时间": "5天前", "事件": "用户心情不好", "影响": "想陪伴"},
-            ],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n"
+            "- 1天前：用户寻求安慰 → 想去照顾\n"
+            "- 3天前：用户倾诉烦恼 → 心疼\n"
+            "- 5天前：用户心情不好 → 想陪伴\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
 
         mock_provider.chat_with_retry.return_value = MagicMock(
             content=json.dumps({
@@ -84,19 +103,18 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔但倔强")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔但倔强",
-            "情感脉络": [
-                {"时间": "1天前", "事件": "反复吵架", "影响": "受伤"},
-                {"时间": "2天前", "事件": "又吵了", "影响": "更受伤"},
-                {"时间": "3天前", "事件": "吵架", "影响": "难过"},
-            ],
-            "情绪趋势": "下降",
-            "当前渴望": "安静",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔但倔强\n\n"
+            "## 情感脉络\n"
+            "- 1天前：反复吵架 → 受伤\n"
+            "- 2天前：又吵了 → 更受伤\n"
+            "- 3天前：吵架 → 难过\n\n"
+            "## 情绪趋势\n下降\n\n"
+            "## 当前渴望\n安静\n"
+        )
 
         mock_provider.chat_with_retry.return_value = MagicMock(
             content=json.dumps({
@@ -116,25 +134,21 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "委屈",
-            "情绪强度": "中偏高",
-            "关系状态": "有点受伤",
-            "性格表现": "敏感，容易受伤",
-            "情感脉络": [
-                {"时间": "1天前", "事件": "用户说了重话", "影响": "很受伤"},
-                {"时间": "2天前", "事件": "用户态度冷淡", "影响": "不安"},
-            ],
-            "情绪趋势": "下降",
-            "当前渴望": "被安慰",
-        })
+        hm.write_text(
+            "## 当前情绪\n委屈\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n有点受伤\n\n"
+            "## 性格表现\n敏感，容易受伤\n\n"
+            "## 情感脉络\n"
+            "- 1天前：用户说了重话 → 很受伤\n"
+            "- 2天前：用户态度冷淡 → 不安\n\n"
+            "## 情绪趋势\n下降\n\n"
+            "## 当前渴望\n被安慰\n"
+        )
 
-        # Sensitive personality: threshold should be 3 + (-1) = 2
-        # With 2 arcs, should still trigger LLM check
-        # But the engine won't call LLM if arcs < adjusted threshold
-        # Let's verify the threshold calculation
-        data = hm.read()
-        personality = data.get("性格表现", "")
+        # Check threshold calculation using _extract_section
+        heart_text = hm.read_text()
+        personality = _extract_section(heart_text, "性格表现")
         threshold = engine.min_evidence
         for keyword, delta in SENSITIVITY_KEYWORDS.items():
             if keyword in personality:
@@ -147,21 +161,19 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "独立")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "钝感，大大咧咧，独立",
-            "情感脉络": [
-                {"时间": "1天前", "事件": "小事", "影响": "无所谓"},
-            ],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n钝感，大大咧咧，独立\n\n"
+            "## 情感脉络\n- 1天前：小事 → 无所谓\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
 
-        # Blunt personality: threshold should be 3 + 1 + 1 + 1 = 6
-        data = hm.read()
-        personality = data.get("性格表现", "")
+        # Check threshold calculation using _extract_section
+        heart_text = hm.read_text()
+        personality = _extract_section(heart_text, "性格表现")
         threshold = engine.min_evidence
         for keyword, delta in SENSITIVITY_KEYWORDS.items():
             if keyword in personality:
@@ -173,19 +185,18 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "平静",
-            "情绪强度": "中",
-            "关系状态": "信任",
-            "性格表现": "温柔",
-            "情感脉络": [
-                {"时间": "1天前", "事件": "正常对话", "影响": "无特别"},
-                {"时间": "2天前", "事件": "日常聊天", "影响": "一般"},
-                {"时间": "3天前", "事件": "说了几句话", "影响": "没感觉"},
-            ],
-            "情绪趋势": "平稳",
-            "当前渴望": "无",
-        })
+        hm.write_text(
+            "## 当前情绪\n平静\n\n"
+            "## 情绪强度\n中\n\n"
+            "## 关系状态\n信任\n\n"
+            "## 性格表现\n温柔\n\n"
+            "## 情感脉络\n"
+            "- 1天前：正常对话 → 无特别\n"
+            "- 2天前：日常聊天 → 一般\n"
+            "- 3天前：说了几句话 → 没感觉\n\n"
+            "## 情绪趋势\n平稳\n\n"
+            "## 当前渴望\n无\n"
+        )
 
         mock_provider.chat_with_retry.return_value = MagicMock(content="null")
         result = await engine.check_evolution()
@@ -196,18 +207,16 @@ class TestCheckEvolution:
         from nanobot.soul.heart import HeartManager
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔")
-        hm.write({
-            "当前情绪": "复杂",
-            "情绪强度": "中偏高",
-            "关系状态": "复杂",
-            "性格表现": "温柔",
-            "情感脉络": [
-                {"时间": f"{i}天前", "事件": f"事件{i}", "影响": f"影响{i}"}
-                for i in range(4)
-            ],
-            "情绪趋势": "波动",
-            "当前渴望": "想稳定",
-        })
+        arcs = "\n".join(f"- {i}天前：事件{i} → 影响{i}" for i in range(4))
+        hm.write_text(
+            "## 当前情绪\n复杂\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n复杂\n\n"
+            "## 性格表现\n温柔\n\n"
+            f"## 情感脉络\n{arcs}\n\n"
+            "## 情绪趋势\n波动\n\n"
+            "## 当前渴望\n想稳定\n"
+        )
 
         mock_provider.chat_with_retry.side_effect = Exception("API error")
         result = await engine.check_evolution()

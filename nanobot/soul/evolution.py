@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from nanobot.soul.heart import HeartManager
+from nanobot.soul.proactive import _extract_section
 
 if TYPE_CHECKING:
     from nanobot.providers.base import LLMProvider
@@ -37,6 +38,11 @@ SENSITIVITY_KEYWORDS: dict[str, int] = {
 }
 
 
+def _count_arcs(arcs_text: str) -> int:
+    """Count bullet-point arcs in the 情感脉络 section."""
+    return sum(1 for line in arcs_text.splitlines() if line.strip().startswith("-"))
+
+
 class EvolutionEngine:
     """Personality and relationship evolution engine.
 
@@ -62,13 +68,13 @@ class EvolutionEngine:
 
         Returns the evolution result dict, or None if no evolution needed.
         """
-        data = self.heart.read()
-        if data is None:
+        heart_text = self.heart.read_text()
+        if heart_text is None:
             return None
 
-        arcs = data.get("情感脉络", [])
-        personality = data.get("性格表现", "")
-        relationship = data.get("关系状态", "")
+        personality = _extract_section(heart_text, "性格表现")
+        relationship = _extract_section(heart_text, "关系状态")
+        arcs_text = _extract_section(heart_text, "情感脉络")
 
         # Adjust evidence threshold based on personality traits
         threshold = self.min_evidence
@@ -76,10 +82,9 @@ class EvolutionEngine:
             if keyword in personality:
                 threshold = max(1, threshold + delta)
 
-        if len(arcs) < threshold:
+        arc_count = _count_arcs(arcs_text)
+        if arc_count < threshold:
             return None
-
-        arcs_text = json.dumps(arcs, ensure_ascii=False)
 
         try:
             response = await self.provider.chat_with_retry(

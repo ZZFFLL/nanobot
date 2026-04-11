@@ -2,11 +2,9 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import re
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from loguru import logger
 
@@ -71,101 +69,65 @@ class SoulEngine:
             return self.soul_config.emotion_model.temperature
         return 0.3
 
-    MAX_HEART_RETRIES: int = 2
+    @property
+    def emotion_max_tokens(self) -> int:
+        """Max tokens for emotion updates."""
+        if self.soul_config:
+            return self.soul_config.emotion_model.max_tokens
+        return 1500
 
     async def update_heart(self, user_msg: str, ai_msg: str) -> bool:
-        """Use LLM to analyze conversation and update HEART.md. Returns True on success.
+        """Use LLM to update HEART.md. LLM outputs Markdown directly.
 
-        Retries up to MAX_HEART_RETRIES times on JSON parse failure,
-        then preserves the current HEART.md unchanged.
+        No JSON parsing — the LLM writes the HEART.md content as Markdown,
+        and we write it to the file as-is. This avoids all format compatibility
+        issues across different LLM providers.
         """
-        current_heart = self.heart.read()
+        current_heart = self.heart.read_text()
         if current_heart is None:
             return False
 
-        heart_text = self.heart.render_markdown(current_heart)
         user_content = (
-            f"## 你刚才的内心\n{heart_text}\n\n"
+            f"## 你现在的内心状态\n{current_heart}\n\n"
             f"## 刚才的对话\n"
             f"[用户] {user_msg}\n"
             f"[数字生命] {ai_msg}\n\n"
-            f"安静下来，感受自己内心的变化，输出更新后的完整 JSON 情感状态。"
+            f"安静下来，感受自己内心的变化，然后输出更新后的完整 HEART.md 内容。"
         )
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT_HEART_UPDATE},
-            {"role": "user", "content": user_content},
-        ]
 
-        for attempt in range(1 + self.MAX_HEART_RETRIES):
-            try:
-                response = await self.provider.chat_with_retry(
-                    model=self.emotion_model,
-                    messages=messages,
-                )
-            except Exception:
-                logger.exception("SoulEngine: LLM call failed (attempt {}/{})", attempt + 1, 1 + self.MAX_HEART_RETRIES)
-                continue
+        try:
+            response = await self.provider.chat_with_retry(
+                model=self.emotion_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPT_HEART_UPDATE},
+                    {"role": "user", "content": user_content},
+                ],
+                temperature=self.emotion_temperature,
+                max_tokens=self.emotion_max_tokens,
+            )
+        except Exception:
+            logger.exception("SoulEngine: LLM call failed")
+            return False
 
-            content = (response.content or "").strip()
-            logger.debug("SoulEngine: LLM raw output ({} chars): {}", len(content), content[:500])
+        content = (response.content or "").strip()
+        if not content:
+            logger.warning("SoulEngine: LLM returned empty output")
+            return False
 
-            json_str = self._extract_json(content)
-            if not json_str:
-                logger.warning("SoulEngine: cannot extract JSON from output (attempt {}/{}), raw: {}", attempt + 1, 1 + self.MAX_HEART_RETRIES, content[:300])
-                continue
+        # Basic sanity: must contain at least one section header
+        if "## 当前情绪" not in content and "## " not in content:
+            logger.warning("SoulEngine: LLM output doesn't look like HEART.md, discarding")
+            return False
 
-            try:
-                data = json.loads(json_str)
-            except json.JSONDecodeError as e:
-                logger.warning("SoulEngine: JSON parse failed (attempt {}/{}): {}, extracted: {}", attempt + 1, 1 + self.MAX_HEART_RETRIES, e, json_str[:300])
-                continue
-
-            return self.heart.write(data)
-
-        logger.warning("SoulEngine: all {} attempts failed, preserving current HEART.md", 1 + self.MAX_HEART_RETRIES)
-        return False
-
-    @staticmethod
-    def _extract_json(text: str) -> str | None:
-        """Extract JSON from LLM output (handle code block wrapping, trailing text, etc.)."""
-        text = text.strip()
-
-        # 1. Try extracting from code block first (most reliable)
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?```", text, re.DOTALL)
-        if match:
-            return match.group(1).strip()
-
-        # 2. Find the first balanced {…} in the text
-        #    This handles cases where LLM outputs: {"key": "value"} some extra text
-        #    or: Some thinking... {"key": "value"}
-        depth = 0
-        start = None
-        for i, ch in enumerate(text):
-            if ch == "{":
-                if depth == 0:
-                    start = i
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0 and start is not None:
-                    candidate = text[start : i + 1]
-                    return candidate
-
-        # 3. Fallback: starts with { but not balanced — return as-is
-        if text.startswith("{"):
-            return text
-
-        return None
+        logger.debug("SoulEngine: HEART.md updated ({} chars)", len(content))
+        return self.heart.write_text(content)
 
     def get_heart_context(self) -> str | None:
         """Get HEART.md content for context injection."""
-        data = self.heart.read()
-        if data is None:
+        content = self.heart.read_text()
+        if content is None:
             return None
-        return (
-            f"# 你的内心此刻（你当下的感受，它会影响你说话的方式和语气）\n\n"
-            f"{self.heart.render_markdown(data)}"
-        )
+        return f"# 你的内心此刻（你当下的感受，它会影响你说话的方式和语气）\n\n{content}"
 
     async def write_memory(self, user_msg: str, ai_msg: str) -> None:
         """Async write dual-perspective memory."""

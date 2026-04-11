@@ -28,16 +28,9 @@ CLASSIFY_PROMPT = (
 DIGEST_PROMPT = (
     "你是一个数字生命在安静地整理自己的内心。你在回溯过去的感受，"
     "判断哪些情绪已经沉淀为性格的一部分，哪些还在心底翻涌。\n\n"
-    "输出严格 JSON。"
-    "包含：digested_indices（已经平静下来的事件索引数组）、"
-    "updated_arcs（还在心底的脉络数组）、"
-    "relationship_update（关系状态的微妙变化）、"
-    "personality_update（性格侧面的细微调整）。\n\n"
-    "记住：\n"
-    "- '已消化'不是'已遗忘'——是那些情绪沉淀成了你的一部分。\n"
-    "- 3天前的波澜已平复，或已了结的事件，可以视为消化了。\n"
-    "- 还没消化的感受，保留原样，不要强行淡化。\n"
-    "只输出 JSON。"
+    "你会看到当前的 HEART.md 内容。请输出更新后的完整 HEART.md Markdown 内容。\n"
+    "对于已经沉淀的情绪脉络，将它们融入关系状态或性格表现的描述中，然后从脉络中移除。\n"
+    "脉络最多保留8条。不要输出任何解释，只输出 Markdown 内容。"
 )
 
 
@@ -63,6 +56,8 @@ class SoulDreamEnhancer:
         """Classify a batch of memories using LLM.
 
         Returns a list of classification results, one per memory.
+        This still uses JSON because it's a structured data operation
+        (updating mempalace room/metadata), not a context injection.
         """
         if not memories:
             return []
@@ -89,51 +84,34 @@ class SoulDreamEnhancer:
             logger.exception("SoulDreamEnhancer: memory classification failed")
             return []
 
-    async def digest_arcs(self) -> dict[str, Any] | None:
+    async def digest_arcs(self) -> bool:
         """Digest emotional arcs from HEART.md.
 
-        Returns the digestion result dict, or None if nothing to digest.
-        Applies changes to HEART.md if successful.
+        Let the LLM read the current HEART.md and output an updated version
+        with digested arcs merged into relationship/personality sections.
+        Returns True if HEART.md was updated, False otherwise.
         """
         if not self.heart:
-            return None
+            return False
 
-        data = self.heart.read()
-        if data is None:
-            return None
-
-        arcs = data.get("情感脉络", [])
-        if not arcs:
-            return None
-
-        arcs_text = json.dumps(arcs, ensure_ascii=False)
-        relationship = data.get("关系状态", "")
-        personality = data.get("性格表现", "")
+        heart_text = self.heart.read_text()
+        if heart_text is None:
+            return False
 
         try:
             response = await self.provider.chat_with_retry(
                 model=self.model,
                 messages=[
                     {"role": "system", "content": DIGEST_PROMPT},
-                    {
-                        "role": "user",
-                        "content": (
-                            f"## 情感脉络\n{arcs_text}\n\n"
-                            f"## 当前关系状态\n{relationship}\n\n"
-                            f"## 当前性格表现\n{personality}"
-                        ),
-                    },
+                    {"role": "user", "content": f"## 当前 HEART.md\n{heart_text}"},
                 ],
             )
             content = (response.content or "").strip()
-            json_str = self._extract_json(content)
-            if not json_str:
-                logger.warning("SoulDreamEnhancer: digest output not valid JSON")
-                return None
-            result = json.loads(json_str)
+            if not content or "## " not in content:
+                logger.warning("SoulDreamEnhancer: digest output doesn't look like HEART.md")
+                return False
 
-            # Apply digestion result to HEART.md
-            self._apply_digestion(data, result)
+            self.heart.write_text(content)
 
             # Personality/relationship evolution check
             try:
@@ -149,42 +127,17 @@ class SoulDreamEnhancer:
             except Exception:
                 logger.debug("SoulDreamEnhancer: evolution check skipped")
 
-            return result
+            return True
         except Exception:
             logger.exception("SoulDreamEnhancer: emotion digestion failed")
-            return None
-
-    def _apply_digestion(self, data: dict[str, Any], result: dict[str, Any]) -> None:
-        """Apply digestion result to HEART.md data and write."""
-        # Remove digested arcs, keep remaining
-        digested = set(result.get("digested_indices", []))
-        updated_arcs = result.get("updated_arcs", [])
-
-        new_arcs: list[dict[str, Any]] = []
-        for i, arc in enumerate(data.get("情感脉络", [])):
-            if i not in digested:
-                new_arcs.append(arc)
-
-        # Append LLM-updated arcs
-        new_arcs.extend(updated_arcs)
-        # Enforce 8-arc limit
-        data["情感脉络"] = new_arcs[:8]
-
-        # Update relationship if provided
-        rel_update = result.get("relationship_update", "")
-        if rel_update:
-            data["关系状态"] = rel_update
-
-        # Update personality if provided
-        pers_update = result.get("personality_update", "")
-        if pers_update:
-            data["性格表现"] = pers_update
-
-        self.heart.write(data)
+            return False
 
     @staticmethod
     def _extract_json(text: str) -> str | None:
-        """Extract JSON from LLM output (handle code block wrapping, trailing text, etc.)."""
+        """Extract JSON from LLM output (handle code block wrapping, trailing text, etc.).
+
+        Kept for classify_memories which still needs structured JSON output.
+        """
         text = text.strip()
 
         # 1. Try extracting from code block first
@@ -193,7 +146,6 @@ class SoulDreamEnhancer:
             return match.group(1).strip()
 
         # 2. Determine expected container type from first bracket found
-        #    and find the first balanced match
         first_brace = len(text)
         first_bracket = len(text)
         for i, ch in enumerate(text):
@@ -205,7 +157,6 @@ class SoulDreamEnhancer:
                 first_bracket = i
                 break
 
-        # Try whichever comes first
         order = [("{", "}"), ("[", "]")] if first_brace <= first_bracket else [("[", "]"), ("{", "}")]
 
         for open_ch, close_ch in order:

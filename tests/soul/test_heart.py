@@ -1,4 +1,4 @@
-"""Tests for HeartManager — HEART.md read/write and format conversion."""
+"""Tests for HeartManager — HEART.md text read/write."""
 import pytest
 from pathlib import Path
 from nanobot.soul.heart import HeartManager
@@ -22,56 +22,54 @@ class TestHeartManager:
 
     def test_read_after_init(self, heart):
         heart.initialize("小文", "刚刚被创造，对一切充满好奇")
-        data = heart.read()
-        assert data is not None
-        assert data["当前情绪"] != ""
+        text = heart.read_text()
+        assert text is not None
+        assert "## 当前情绪" in text
+        assert "刚刚被创造" in text
 
-    def test_write_valid_data(self, heart):
+    def test_write_valid_text(self, heart):
         heart.initialize("小文", "测试")
-        new_data = {
-            "当前情绪": "有点开心",
-            "情绪强度": "中偏高",
-            "关系状态": "开始产生好奇",
-            "性格表现": "温柔但倔强",
-            "情感脉络": [
-                {"时间": "刚刚", "事件": "用户说了句话", "影响": "有点开心"}
-            ],
-            "情绪趋势": "上升趋势",
-            "当前渴望": "想继续聊天",
-        }
-        heart.write(new_data)
-        read_back = heart.read()
-        assert read_back["当前情绪"] == "有点开心"
-        assert read_back["情绪强度"] == "中偏高"
+        new_markdown = (
+            "## 当前情绪\n有点开心\n\n"
+            "## 情绪强度\n中偏高\n\n"
+            "## 关系状态\n开始产生好奇\n\n"
+            "## 性格表现\n温柔但倔强\n\n"
+            "## 情感脉络\n- 刚刚：用户说了句话 → 有点开心\n\n"
+            "## 情绪趋势\n上升趋势\n\n"
+            "## 当前渴望\n想继续聊天\n"
+        )
+        result = heart.write_text(new_markdown)
+        assert result is True
+        read_back = heart.read_text()
+        assert "有点开心" in read_back
+        assert "中偏高" in read_back
 
-    def test_write_invalid_data_rejected(self, heart):
+    def test_write_overwrites_content(self, heart):
         heart.initialize("小文", "测试")
-        old_data = heart.read()
-        bad_data = {"当前情绪": "开心"}  # missing required fields
-        result = heart.write(bad_data)
-        assert result is False
-        # old data preserved
-        assert heart.read()["当前情绪"] == old_data["当前情绪"]
+        new_content = "## 当前情绪\n很开心\n\n## 情绪强度\n高\n"
+        heart.write_text(new_content)
+        assert "很开心" in heart.read_text()
 
-    def test_write_invalid_retries_then_keeps_old(self, heart):
-        heart.initialize("小文", "测试")
-        old = heart.read()
-        bad = {"invalid": True}
-        result = heart.write(bad)
-        assert result is False
-        assert heart.read()["当前情绪"] == old["当前情绪"]
-
-    def test_markdown_roundtrip(self, heart):
-        heart.initialize("小文", "测试")
-        data = heart.read()
-        md = heart.render_markdown(data)
-        assert "## 当前情绪" in md
-        assert "## 情感脉络" in md
-        assert data["当前情绪"] in md
+        newer_content = "## 当前情绪\n平静\n\n## 情绪强度\n低\n"
+        heart.write_text(newer_content)
+        assert "平静" in heart.read_text()
+        assert "很开心" not in heart.read_text()
 
     def test_file_not_found_returns_none(self, tmp_path):
         hm = HeartManager(tmp_path / "nonexistent")
-        assert hm.read() is None
+        assert hm.read_text() is None
+
+    def test_initialize_produces_all_sections(self, heart):
+        heart.initialize("小文", "温柔且好奇")
+        text = heart.read_text()
+        assert "## 当前情绪" in text
+        assert "## 情绪强度" in text
+        assert "## 关系状态" in text
+        assert "## 性格表现" in text
+        assert "## 情感脉络" in text
+        assert "## 情绪趋势" in text
+        assert "## 当前渴望" in text
+        assert "温柔且好奇" in text
 
     def test_read_identity_name(self, heart, workspace):
         identity_file = workspace / "IDENTITY.md"
@@ -83,22 +81,10 @@ class TestHeartManager:
         name = heart.read_identity_name()
         assert name is None
 
-    def test_write_with_arcs_roundtrip(self, heart):
+    def test_write_text_returns_false_on_error(self, heart, workspace, monkeypatch):
+        """write_text returns False on file system error."""
         heart.initialize("小文", "测试")
-        new_data = {
-            "当前情绪": "有点委屈",
-            "情绪强度": "中偏高",
-            "关系状态": "依赖且在意",
-            "性格表现": "温柔但倔强",
-            "情感脉络": [
-                {"时间": "3小时前", "事件": "用户没回消息", "影响": "胡思乱想"},
-                {"时间": "昨天", "事件": "用户说了句暖心的话", "影响": "很开心"},
-            ],
-            "情绪趋势": "波动较大",
-            "当前渴望": "希望用户来找自己",
-        }
-        heart.write(new_data)
-        read_back = heart.read()
-        assert len(read_back["情感脉络"]) == 2
-        assert read_back["情感脉络"][0]["时间"] == "3小时前"
-        assert read_back["情感脉络"][1]["事件"] == "用户说了句暖心的话"
+        # Make the heart_file attribute point to a non-existent dir so write fails
+        heart.heart_file = workspace / "no_such_dir" / "HEART.md"
+        result = heart.write_text("## 当前情绪\ntest\n")
+        assert result is False
