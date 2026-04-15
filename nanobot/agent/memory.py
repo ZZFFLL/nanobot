@@ -642,10 +642,7 @@ class Dream:
                 try:
                     digest_result = await enhancer.digest_arcs()
                     if digest_result:
-                        logger.info(
-                            "SoulDreamEnhancer: digested {} arcs",
-                            len(digest_result.get("digested_indices", [])),
-                        )
+                        logger.info("SoulDreamEnhancer: digested HEART arcs")
                 except Exception:
                     logger.debug("SoulDreamEnhancer: emotion digestion skipped")
         except Exception:

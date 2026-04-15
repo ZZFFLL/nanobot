@@ -698,6 +698,38 @@ def gateway(
             except Exception:
                 logger.exception("Dream cron job failed")
             return None
+        if job.name == "weekly_review":
+            try:
+                from datetime import datetime as _dt
+
+                from nanobot.soul.logs import SoulLogWriter
+                from nanobot.soul.review import WeeklyReviewBuilder
+
+                content = WeeklyReviewBuilder().build(config.workspace_path)
+                SoulLogWriter(config.workspace_path).write_weekly(
+                    _dt.now().strftime("%Y-%m-%d"),
+                    content,
+                )
+                logger.info("Soul weekly review completed")
+            except Exception:
+                logger.exception("Soul weekly review failed")
+            return None
+        if job.name == "monthly_calibration":
+            try:
+                from datetime import datetime as _dt
+
+                from nanobot.soul.calibration import MonthlyCalibrationBuilder
+                from nanobot.soul.logs import SoulLogWriter
+
+                content = MonthlyCalibrationBuilder().build(config.workspace_path)
+                SoulLogWriter(config.workspace_path).write_monthly(
+                    _dt.now().strftime("%Y-%m-%d"),
+                    content,
+                )
+                logger.info("Soul monthly calibration completed")
+            except Exception:
+                logger.exception("Soul monthly calibration failed")
+            return None
 
         from nanobot.agent.tools.cron import CronTool
         from nanobot.agent.tools.message import MessageTool
@@ -887,6 +919,13 @@ def gateway(
             payload=CronPayload(kind="system_event"),
         ))
         console.print("[green]✓[/green] Soul: daily events check enabled")
+        from nanobot.soul.calibration import build_monthly_calibration_job
+        from nanobot.soul.review import build_weekly_review_job
+
+        cron.register_system_job(build_weekly_review_job(config.agents.defaults.timezone))
+        cron.register_system_job(build_monthly_calibration_job(config.agents.defaults.timezone))
+        console.print("[green]✓[/green] Soul: weekly review enabled")
+        console.print("[green]✓[/green] Soul: monthly calibration enabled")
 
     if channels.enabled_channels:
         console.print(f"[green]✓[/green] Channels enabled: {', '.join(channels.enabled_channels)}")

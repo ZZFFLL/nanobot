@@ -14,15 +14,17 @@ class SoulLogWriter:
         self.base_dir = workspace / "soul_logs"
 
     def write_weekly(self, stamp: str, content: str) -> Path:
-        target = self.base_dir / "weekly"
-        target.mkdir(parents=True, exist_ok=True)
-        path = target / f"{stamp}-周复盘.md"
-        path.write_text(content, encoding="utf-8")
-        return path
+        return self._write("weekly", f"{stamp}-周复盘.md", content)
+
+    def write_monthly(self, stamp: str, content: str) -> Path:
+        return self._write("monthly", f"{stamp}-月校准报告.md", content)
 
     def write_proactive(self, stamp: str, decision: ProactiveDecision) -> Path:
-        target = self.base_dir / "proactive"
+        return self._write("proactive", f"{stamp}-主动陪伴.md", decision.to_markdown())
+
+    def _write(self, kind: str, filename: str, content: str) -> Path:
+        target = self.base_dir / kind
         target.mkdir(parents=True, exist_ok=True)
-        path = target / f"{stamp}-主动陪伴.md"
-        path.write_text(decision.to_markdown(), encoding="utf-8")
+        path = target / filename
+        path.write_text(content, encoding="utf-8")
         return path
