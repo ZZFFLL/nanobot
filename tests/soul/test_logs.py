@@ -44,3 +44,31 @@ def test_log_writer_creates_proactive_event_trace(tmp_path):
     assert path.exists()
     assert "gate_blocked" in content
     assert "冷却中" in content
+
+
+def test_log_writer_creates_init_trace_jsonl(tmp_path):
+    writer = SoulLogWriter(tmp_path)
+
+    path = writer.write_init_trace(
+        "2026-04-15-110000",
+        [
+            {
+                "attempt": 1,
+                "stage": "adjudication",
+                "status": "rejected",
+                "reason": "SOUL_PROFILE 候选非法",
+            },
+            {
+                "attempt": 2,
+                "stage": "adjudication",
+                "status": "accepted",
+                "reason": "",
+            },
+        ],
+    )
+    content = path.read_text(encoding="utf-8")
+
+    assert path.exists()
+    assert "init" in str(path)
+    assert '"stage": "adjudication"' in content
+    assert "SOUL_PROFILE 候选非法" in content

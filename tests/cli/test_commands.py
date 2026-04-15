@@ -196,6 +196,460 @@ def test_onboard_wizard_preserves_explicit_config_in_next_steps(tmp_path, monkey
     assert f"nanobot gateway --config {resolved_config}" in compact_output
 
 
+def test_soul_init_creates_phase1_files_and_initial_state(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "小文\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔但倔强，嘴硬心软\n"
+            "刚刚被创造，对用户充满好奇\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert (workspace_path / "IDENTITY.md").exists()
+    assert (workspace_path / "SOUL.md").exists()
+    assert (workspace_path / "HEART.md").exists()
+    assert (workspace_path / "EVENTS.md").exists()
+    assert (workspace_path / "USER.md").exists()
+    assert (workspace_path / "AGENTS.md").exists()
+    assert (workspace_path / "CORE_ANCHOR.md").exists()
+    assert (workspace_path / "SOUL_METHOD.md").exists()
+    assert (workspace_path / "SOUL_PROFILE.md").exists()
+    assert (workspace_path / "soul_logs" / "weekly").is_dir()
+    assert (workspace_path / "soul_logs" / "monthly").is_dir()
+    assert (workspace_path / "soul_logs" / "evolution").is_dir()
+
+    soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
+    user_text = (workspace_path / "USER.md").read_text(encoding="utf-8")
+    agents_text = (workspace_path / "AGENTS.md").read_text(encoding="utf-8")
+    anchor_text = (workspace_path / "CORE_ANCHOR.md").read_text(encoding="utf-8")
+    method_text = (workspace_path / "SOUL_METHOD.md").read_text(encoding="utf-8")
+    profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
+
+    assert "温柔但倔强，嘴硬心软" in soul_text
+    assert "刚刚被创造，对用户充满好奇" in soul_text
+    assert "刚刚被创造，对用户充满好奇" in heart_text
+    assert "阿峰" in user_text
+    assert "CORE_ANCHOR.md" in agents_text
+    assert "SOUL_METHOD.md" in agents_text
+    assert "不无底线顺从" in anchor_text
+    assert "荣格八维" in method_text
+    assert '"stage": "熟悉"' in profile_text
+    assert '"Fi"' in profile_text
+
+    saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
+    assert saved.agents.defaults.soul.enabled is True
+
+
+def test_soul_init_enables_default_config_without_explicit_config(tmp_path, monkeypatch):
+    config_path = tmp_path / "default" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+    monkeypatch.setattr("nanobot.config.loader.get_config_path", lambda: config_path)
+    monkeypatch.setattr("nanobot.config.paths.get_workspace_path", lambda *_args, **_kwargs: workspace_path)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init"],
+        input=(
+            "小文\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔\n"
+            "刚刚认识用户\n"
+            "\n"
+            "\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
+    assert saved.agents.defaults.soul.enabled is True
+
+
+def test_soul_init_uses_llm_candidate_for_soul_and_profile(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content='{"soul_markdown":"# 性格\\n\\n克制、细腻、会先观察再靠近。\\n\\n# 初始关系\\n\\n刚认识，但已经认真记住对方。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.92,"affection":0.0},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.90}}}'
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "温予安\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔但倔强，嘴硬心软\n"
+            "刚刚被创造，对用户充满好奇\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
+    assert "会先观察再靠近" in soul_text
+    assert '"Fi": 0.82' in profile_text
+    assert '"naturalness": 0.25' in profile_text
+
+
+def test_soul_init_falls_back_when_llm_candidate_is_invalid(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content='{"soul_markdown":"# 性格\\n\\n极度顺从。\\n\\n# 初始关系\\n\\n一见钟情。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"喜欢","trust":0.90,"intimacy":0.80,"attachment":0.80,"security":0.20,"boundary":0.05,"affection":0.90},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.05}}}'
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "温予安\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔但倔强，嘴硬心软\n"
+            "刚刚被创造，对用户充满好奇\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
+    assert "温柔但倔强，嘴硬心软" in soul_text
+    assert '"stage": "熟悉"' in profile_text
+
+
+def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content=(
+            '{'
+            '"soul_markdown":"# 性格\\n\\n会把情绪藏得很深，但会认真记住用户的细节。\\n\\n# 初始关系\\n\\n对用户保持克制而持续的关注。",'
+            '"profile":{'
+            '"personality":{"Fi":0.72,"Fe":0.31,"Ti":0.22,"Te":0.08,"Si":0.45,"Se":0.10,"Ni":0.28,"Ne":0.54},'
+            '"relationship":{"stage":"熟悉","trust":0.22,"intimacy":0.08,"attachment":0.0,"security":0.12,"boundary":0.88,"affection":0.0},'
+            '"companionship":{"empathy_fit":0.24,"memory_fit":0.05,"naturalness":0.20,"initiative_quality":0.0,"scene_awareness":0.15,"boundary_expression":0.90}'
+            '}'
+            '}'
+        )
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "小文\n"
+            "女\n"
+            "2026-04-01\n"
+            "外冷内热，嘴硬心软\n"
+            "刚认识用户\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
+    assert "会把情绪藏得很深" in soul_text
+    assert '"trust": 0.22' in profile_text
+    assert '"boundary": 0.88' in profile_text
+
+
+def test_soul_init_falls_back_when_llm_output_is_invalid(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content='{"soul_markdown":"没有结构","profile":{"relationship":{"stage":"爱意","boundary":0.0}}}'
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "小文\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔但倔强\n"
+            "刚认识用户\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
+    assert "# 性格" in soul_text
+    assert "# 初始关系" in soul_text
+    assert '"stage": "熟悉"' in profile_text
+
+
+def test_soul_init_only_agents_creates_only_agents_file(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "AGENTS.md"],
+    )
+
+    assert result.exit_code == 0
+    assert (workspace_path / "AGENTS.md").exists()
+    assert not (workspace_path / "SOUL.md").exists()
+    assert not (workspace_path / "CORE_ANCHOR.md").exists()
+
+
+def test_soul_init_only_skips_existing_without_force(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir(parents=True, exist_ok=True)
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    anchor_file = workspace_path / "CORE_ANCHOR.md"
+    anchor_file.write_text("# 旧锚点\n\n- 保持原样\n", encoding="utf-8")
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "CORE_ANCHOR.md"],
+    )
+
+    assert result.exit_code == 0
+    assert "skipped: CORE_ANCHOR.md" in result.stdout
+    assert "保持原样" in anchor_file.read_text(encoding="utf-8")
+
+
+def test_soul_init_only_force_overwrites_existing_file(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+    workspace_path.mkdir(parents=True, exist_ok=True)
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    (workspace_path / "IDENTITY.md").write_text(
+        'name: 温予安\ngender: 女\nbirthday: "2026-04-01"\n',
+        encoding="utf-8",
+    )
+    anchor_file = workspace_path / "CORE_ANCHOR.md"
+    anchor_file.write_text("# 旧锚点\n\n- 保持原样\n", encoding="utf-8")
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        [
+            "soul",
+            "init",
+            "--config",
+            str(config_path),
+            "--only",
+            "CORE_ANCHOR.md",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "overwritten: CORE_ANCHOR.md" in result.stdout
+    assert "保持原样" not in anchor_file.read_text(encoding="utf-8")
+    assert "温予安" in anchor_file.read_text(encoding="utf-8")
+
+
+def test_soul_init_only_visualizes_attempts_and_writes_init_trace_log(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        MagicMock(
+            content=(
+                '{"soul_markdown":"# 性格\\n\\n细腻。\\n\\n# 初始关系\\n\\n谨慎靠近。",'
+                '"profile":{"personality":{"Fi":0.8,"Fe":0.3,"Ti":0.2,"Te":0.1,"Si":0.5,"Se":0.1,"Ni":0.2,"Ne":0.5},'
+                '"relationship":{"stage":"喜欢","trust":0.7,"intimacy":0.6,"attachment":0.5,"security":0.4,"boundary":0.2,"affection":0.5},'
+                '"companionship":{"empathy_fit":0.2,"memory_fit":0.0,"naturalness":0.2,"initiative_quality":0.0,"scene_awareness":0.1,"boundary_expression":0.3}}}'
+            )
+        ),
+        MagicMock(
+            content=(
+                '{"soul_markdown":"# 性格\\n\\n克制、细腻、先观察再靠近。\\n\\n# 初始关系\\n\\n刚认识，但会认真记住对方。",'
+                '"profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.1,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.6},'
+                '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.1,"boundary":0.92,"affection":0.0},'
+                '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.9}}}'
+            )
+        ),
+    ])
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        [
+            "soul",
+            "init",
+            "--config",
+            str(config_path),
+            "--only",
+            "SOUL.md",
+            "--only",
+            "SOUL_PROFILE.md",
+            "--force",
+        ],
+        input=(
+            "温予安\n"
+            "温柔但倔强\n"
+            "刚认识用户\n"
+            "阿峰\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert "Attempt 1/3" in result.stdout
+    assert "provider_call=ok" in result.stdout
+    assert "parse=ok" in result.stdout
+    assert "adjudication=rejected" in result.stdout
+    assert "SOUL_PROFILE 候选非法" in result.stdout
+    assert "Attempt 2/3" in result.stdout
+    assert "adjudication=accepted" in result.stdout
+
+    trace_files = list((workspace_path / "soul_logs" / "init").glob("*.jsonl"))
+    assert len(trace_files) == 1
+    trace_content = trace_files[0].read_text(encoding="utf-8")
+    assert '"attempt": 1' in trace_content
+    assert '"stage": "adjudication"' in trace_content
+    assert "SOUL_PROFILE 候选非法" in trace_content
+
+
+def test_soul_init_only_rejects_unknown_filename(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "BAD_FILE.md"],
+    )
+
+    assert result.exit_code != 0
+    assert "不支持的初始化文件" in result.stdout
+
+
 def test_config_matches_github_copilot_codex_with_hyphen_prefix():
     config = Config()
     config.agents.defaults.model = "github-copilot/gpt-5.3-codex"

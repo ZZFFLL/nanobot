@@ -20,13 +20,19 @@ class HeartManager:
         self.heart_file = workspace / "HEART.md"
         self.identity_file = workspace / "IDENTITY.md"
 
-    def initialize(self, name: str, initial_description: str) -> None:
+    def initialize(
+        self,
+        name: str,
+        initial_description: str,
+        initial_relationship: str | None = None,
+    ) -> None:
         """Initialize HEART.md with default emotional state."""
+        relationship = initial_relationship or "刚刚被创造，对用户充满好奇"
         content = (
             f"## 当前情绪\n"
             f"刚刚诞生，{initial_description}\n\n"
             f"## 情绪强度\n中\n\n"
-            f"## 关系状态\n刚刚被创造，对用户充满好奇\n\n"
+            f"## 关系状态\n{relationship}\n\n"
             f"## 性格表现\n{initial_description}\n\n"
             f"## 情感脉络\n（暂无）\n\n"
             f"## 情绪趋势\n刚刚开始，还没有趋势\n\n"

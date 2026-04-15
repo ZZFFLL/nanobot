@@ -175,7 +175,7 @@ class ProactiveEngine:
 
     # ── Step 2: LLM precise judgment ─────────────────────────────────
 
-    async def decide_and_generate(self) -> ProactiveDecision | None:
+    async def decide_and_generate(self, *, extra_context: str | None = None) -> ProactiveDecision | None:
         """LLM precise judgment: decide whether to reach out + generate message.
 
         Returns ProactiveDecision if gate passes and LLM succeeds, None otherwise.
@@ -214,6 +214,10 @@ class ProactiveEngine:
             heart_preview,
         )
 
+        extra_context_block = ""
+        if extra_context:
+            extra_context_block = f"\n\n## 额外背景\n{extra_context}"
+
         # Determine which model to use
         llm_model = self._config.proactive_llm.model or self.model
         llm_temp = self._config.proactive_llm.temperature
@@ -227,7 +231,8 @@ class ProactiveEngine:
                     {"role": "user", "content": (
                         f"## 你是谁\n{ai_name}\n\n"
                         f"## 你现在的内心\n{heart_text}\n\n"
-                        f"## 时间\n{time_desc}{idle_hint}\n\n"
+                        f"## 时间\n{time_desc}{idle_hint}"
+                        f"{extra_context_block}\n\n"
                         f"你要主动联系用户吗？"
                     )},
                 ],

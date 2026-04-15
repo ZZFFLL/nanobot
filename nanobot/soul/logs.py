@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 
@@ -28,6 +29,13 @@ class SoulLogWriter:
             f"- 详细信息: {detail}\n"
         )
         return self._write("proactive", f"{stamp}-主动事件.md", content)
+
+    def write_init_trace(self, stamp: str, records: list[dict]) -> Path:
+        lines = [json.dumps(record, ensure_ascii=False) for record in records]
+        content = "\n".join(lines)
+        if content:
+            content += "\n"
+        return self._write("init", f"{stamp}-初始化追踪.jsonl", content)
 
     def _write(self, kind: str, filename: str, content: str) -> Path:
         target = self.base_dir / kind

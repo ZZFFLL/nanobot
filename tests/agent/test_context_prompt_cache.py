@@ -61,6 +61,33 @@ def test_system_prompt_reflects_current_dream_memory_contract(tmp_path) -> None:
     assert "write important facts here" not in prompt
 
 
+def test_system_prompt_includes_soul_method_when_present(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    (workspace / "SOUL_METHOD.md").write_text(
+        "# SOUL 方法论\n\n- 主轴: 荣格八维\n",
+        encoding="utf-8",
+    )
+    builder = ContextBuilder(workspace)
+
+    prompt = builder.build_system_prompt()
+
+    assert "## SOUL_METHOD.md" in prompt
+    assert "荣格八维" in prompt
+
+
+def test_identity_declares_soul_authority_contract(tmp_path) -> None:
+    workspace = _make_workspace(tmp_path)
+    (workspace / "IDENTITY.md").write_text("name: 温予安\n", encoding="utf-8")
+    builder = ContextBuilder(workspace)
+
+    prompt = builder.build_system_prompt()
+
+    assert "CORE_ANCHOR.md" in prompt
+    assert "SOUL_METHOD.md" in prompt
+    assert "source of truth" in prompt
+    assert "not just an assistant" not in prompt
+
+
 def test_runtime_context_is_separate_untrusted_user_message(tmp_path) -> None:
     """Runtime metadata should be merged with the user message."""
     workspace = _make_workspace(tmp_path)
@@ -149,12 +176,12 @@ def test_partial_dream_processing_shows_only_remainder(tmp_path) -> None:
 
 
 def test_execution_rules_in_system_prompt(tmp_path) -> None:
-    """New execution rules should appear in the system prompt."""
+    """Runtime bridge rules should appear in the system prompt."""
     workspace = _make_workspace(tmp_path)
     builder = ContextBuilder(workspace)
 
     prompt = builder.build_system_prompt()
-    assert "Act, don't narrate" in prompt
+    assert "ordinary conversation" in prompt
     assert "Read before you write" in prompt
     assert "verify the result" in prompt
 

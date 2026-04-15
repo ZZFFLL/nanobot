@@ -842,6 +842,7 @@ def gateway(
 
     # ── Digital Life: proactive behavior integration ──
     if agent._soul_engine:
+        from nanobot.soul.heartbeat_bridge import run_soul_heartbeat_tick
         from nanobot.soul.proactive import ProactiveEngine
         from nanobot.soul.events import EventsManager
         from nanobot.soul.soul_config import load_soul_json
@@ -851,61 +852,40 @@ def gateway(
         events_mgr = EventsManager(config.workspace_path)
         original_tick = heartbeat._tick
 
+        async def _record_proactive_message(decision) -> None:
+            try:
+                from datetime import datetime as _dt
+
+                from nanobot.soul.logs import SoulLogWriter
+
+                SoulLogWriter(config.workspace_path).write_proactive(
+                    _dt.now().strftime("%Y-%m-%d-%H%M%S"),
+                    decision,
+                )
+            except Exception:
+                logger.debug("Soul: failed to write proactive log")
+
+            try:
+                await agent._soul_engine.update_heart("(主动联系用户)", decision.message)
+                if agent._soul_engine._memory_writer:
+                    import asyncio as _asyncio
+                    _asyncio.create_task(
+                        agent._soul_engine.write_memory("(主动联系用户)", decision.message)
+                    )
+            except Exception:
+                logger.debug("Soul: failed to record proactive message")
+
         async def _soul_aware_tick() -> None:
             """Heartbeat tick enhanced with soul-driven proactive behavior."""
-            # 1. Adjust interval based on emotion intensity
-            interval = proactive.get_interval_seconds()
-            heartbeat.interval_s = interval
-
-            # 2. Check today's life events
-            today_events = events_mgr.check_today()
-            if today_events:
-                event_msgs = [f"[{e.type}] {e.description} — {e.behavior}" for e in today_events]
-                event_text = "今天有特别的日子：\n" + "\n".join(event_msgs)
-                channel, chat_id = _pick_heartbeat_target()
-                if channel != "cli":
-                    from nanobot.bus.events import OutboundMessage
-                    await bus.publish_outbound(OutboundMessage(
-                        channel=channel, chat_id=chat_id, content=event_text,
-                    ))
-
-            # 3. Proactive behavior — rule gate + LLM decision in one call
-            decision = await proactive.decide_and_generate()
-            if decision and decision.want_to_reach_out and decision.message:
-                try:
-                    from datetime import datetime as _dt
-
-                    from nanobot.soul.logs import SoulLogWriter
-
-                    SoulLogWriter(config.workspace_path).write_proactive(
-                        _dt.now().strftime("%Y-%m-%d-%H%M%S"),
-                        decision,
-                    )
-                except Exception:
-                    logger.debug("Soul: failed to write proactive log")
-
-                channel, chat_id = _pick_heartbeat_target()
-                if channel != "cli":
-                    from nanobot.bus.events import OutboundMessage
-                    await bus.publish_outbound(OutboundMessage(
-                        channel=channel, chat_id=chat_id, content=decision.message,
-                    ))
-
-                # Record proactive message: update HEART.md + write memory
-                try:
-                    await agent._soul_engine.update_heart("(主动联系用户)", decision.message)
-                    if agent._soul_engine._memory_writer:
-                        import asyncio as _asyncio
-                        _asyncio.create_task(
-                            agent._soul_engine.write_memory("(主动联系用户)", decision.message)
-                        )
-                except Exception:
-                    logger.debug("Soul: failed to record proactive message")
-
-                return  # Proactive message sent, skip normal heartbeat
-
-            # 4. Fall back to normal heartbeat
-            await original_tick()
+            await run_soul_heartbeat_tick(
+                heartbeat=heartbeat,
+                proactive=proactive,
+                events_mgr=events_mgr,
+                bus=bus,
+                pick_target=_pick_heartbeat_target,
+                original_tick=original_tick,
+                record_proactive=_record_proactive_message,
+            )
 
         heartbeat._tick = _soul_aware_tick
         console.print("[green]✓[/green] Soul: proactive behavior enabled")
@@ -1531,35 +1511,149 @@ soul_app = typer.Typer(help="Digital life management")
 app.add_typer(soul_app, name="soul")
 
 
+def _print_soul_init_trace(trace) -> None:
+    for line in trace.to_console_lines():
+        console.print(f"[dim]• {line}[/dim]")
+
+
+def _write_soul_init_trace(workspace: Path, trace, *, model: str, targets: list[str] | None = None) -> None:
+    from datetime import datetime
+
+    from nanobot.soul.logs import SoulLogWriter
+
+    stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
+    path = SoulLogWriter(workspace).write_init_trace(
+        stamp,
+        trace.to_log_records(model=model, targets=targets),
+    )
+    console.print(f"[dim]  trace saved: {path}[/dim]")
+
+
+def _report_soul_init_run(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
+    adjudicated = run_result.adjudicated
+    _print_soul_init_trace(run_result.trace)
+    _write_soul_init_trace(workspace, run_result.trace, model=model, targets=targets)
+    if not adjudicated.used_fallback:
+        console.print(
+            "[green]✓[/green] "
+            f"Soul initialized via methodology-bound LLM candidate (attempt {run_result.trace.accepted_attempt}/{run_result.trace.max_attempts})"
+        )
+    else:
+        console.print(
+            "[yellow]•[/yellow] "
+            f"Soul init candidate rejected after {run_result.trace.total_attempts}/{run_result.trace.max_attempts} attempts, "
+            f"fallback profile used ({adjudicated.reason})"
+        )
+
+
 @soul_app.command("init")
 def soul_init(
     workspace: str | None = typer.Option(None, "--workspace", "-w", help="Workspace directory"),
     config: str | None = typer.Option(None, "--config", "-c", help="Path to config file"),
+    only: list[str] | None = typer.Option(None, "--only", help="Initialize only specific files; repeatable"),
+    force: bool = typer.Option(False, "--force", help="Overwrite existing selected files"),
 ):
     """Initialize a digital life with personality and emotions."""
-    from datetime import date
-
-    from nanobot.soul.heart import HeartManager
-    from nanobot.soul.events import EventsManager
+    from nanobot.config.loader import get_config_path, load_config, save_config, set_config_path
+    from nanobot.soul.bootstrap import SoulInitPayload, bootstrap_workspace, infer_adjudicated_soul_init
+    from nanobot.soul.init_files import (
+        collect_payload_for_targets,
+        normalize_only_files,
+        required_fields_for_targets,
+        targets_need_llm,
+        write_selected_files,
+    )
 
     # Determine workspace
+    resolved_config_path = Path(config).expanduser().resolve() if config else get_config_path()
+    cfg = None
     if config:
-        from nanobot.config.loader import load_config, set_config_path
-
-        config_path = Path(config).expanduser().resolve()
-        set_config_path(config_path)
-        cfg = load_config(config_path)
+        set_config_path(resolved_config_path)
+        cfg = load_config(resolved_config_path)
         ws = cfg.workspace_path
     elif workspace:
         ws = Path(workspace).expanduser().resolve()
     else:
         from nanobot.config.paths import get_workspace_path
 
-        ws = get_workspace_path()
+        if resolved_config_path.exists():
+            set_config_path(resolved_config_path)
+            cfg = load_config(resolved_config_path)
+            ws = cfg.workspace_path
+        else:
+            ws = get_workspace_path()
 
     ws.mkdir(parents=True, exist_ok=True)
 
     console.print(f"{__logo__} Digital Life Initialization\n")
+
+    if only:
+        try:
+            targets = normalize_only_files(only)
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
+
+        pending_targets = [target for target in targets if force or not (ws / target).exists()]
+        provider = None
+        effective_cfg = cfg or load_config(resolved_config_path if resolved_config_path.exists() else None)
+        use_llm = targets_need_llm(pending_targets)
+        if use_llm:
+            try:
+                provider = _make_provider(effective_cfg)
+            except Exception:
+                provider = None
+
+        required_fields = required_fields_for_targets(pending_targets, use_llm=use_llm)
+        payload = collect_payload_for_targets(
+            ws,
+            required_fields=required_fields,
+            prompt_fn=lambda label, default: typer.prompt(label, default=default),
+        )
+
+        soul_markdown_override: str | None = None
+        profile_override: dict | None = None
+        if use_llm and provider and payload is not None:
+            try:
+                import asyncio as _asyncio
+
+                run_result = _asyncio.run(
+                    infer_adjudicated_soul_init(
+                        payload,
+                        provider=provider,
+                        model=effective_cfg.agents.defaults.model,
+                    )
+                )
+                adjudicated = run_result.adjudicated
+                soul_markdown_override = adjudicated.soul_markdown
+                profile_override = adjudicated.profile
+                _report_soul_init_run(
+                    ws,
+                    run_result,
+                    model=effective_cfg.agents.defaults.model,
+                    targets=targets,
+                )
+            except Exception:
+                console.print("[dim]  (LLM soul init skipped — fallback initialization used)[/dim]")
+
+        actions = write_selected_files(
+            ws,
+            targets=targets,
+            payload=payload,
+            force=force,
+            soul_markdown_override=soul_markdown_override,
+            profile_override=profile_override,
+        )
+
+        if resolved_config_path.exists():
+            cfg = load_config(resolved_config_path)
+            cfg.agents.defaults.soul.enabled = True
+            save_config(cfg, resolved_config_path)
+            console.print("[green]✓[/green] Soul enabled in config")
+
+        for action in actions:
+            console.print(f"{action.status}: {action.filename}")
+        return
 
     # Interactive prompts
     name = typer.prompt("数字生命的名字", default="小文")
@@ -1570,67 +1664,78 @@ def soul_init(
     user_name = typer.prompt("用户的名字（可留空运行中学习）", default="")
     user_birthday = typer.prompt("用户的生日（可选，格式 YYYY-MM-DD）", default="")
 
-    # Create IDENTITY.md
-    today = date.today().isoformat()
-    identity = f"name: {name}\ngender: {gender}\nbirthday: \"{birthday}\"\norigin: Created on {today}\n"
-    (ws / "IDENTITY.md").write_text(identity, encoding="utf-8")
-    console.print("[green]✓[/green] IDENTITY.md created")
+    personality_values: dict[str, float] | None = None
+    personality_markdown: str | None = None
+    soul_markdown_override: str | None = None
+    profile_override: dict | None = None
 
-    # Create SOUL.md
-    soul = f"# 性格\n\n{personality}\n"
-    (ws / "SOUL.md").write_text(soul, encoding="utf-8")
-    console.print("[green]✓[/green] SOUL.md created")
-
-    # Assess initial cognitive function profile
+    # Optional LLM-backed soul initialization
     try:
         import asyncio as _asyncio
 
-        if config:
-            from nanobot.config.loader import set_config_path
-            set_config_path(Path(config).expanduser().resolve())
-        from nanobot.config.loader import load_config
-        cfg = load_config()
-        provider = _make_provider(cfg)
+        effective_cfg = cfg or load_config(resolved_config_path if resolved_config_path.exists() else None)
+        provider = _make_provider(effective_cfg)
         if provider:
-            from nanobot.soul.evolution import EvolutionEngine
-            evo = EvolutionEngine(ws, provider, cfg.agents.defaults.model)
-            profile = _asyncio.run(evo.assess_initial_profile(personality))
-            # Append profile to SOUL.md
-            soul_with_profile = soul.rstrip() + f"\n\n# 认知功能图谱\n\n> 此章节由系统自动管理，不建议手动编辑\n\n{profile.to_markdown()}\n"
-            (ws / "SOUL.md").write_text(soul_with_profile, encoding="utf-8")
-            console.print("[green]✓[/green] Cognitive function profile assessed")
+            payload = SoulInitPayload(
+                ai_name=name,
+                gender=gender,
+                birthday=birthday,
+                personality=personality,
+                relationship=relationship,
+                user_name=user_name,
+                user_birthday=user_birthday,
+            )
+            run_result = _asyncio.run(
+                infer_adjudicated_soul_init(
+                    payload,
+                    provider=provider,
+                    model=effective_cfg.agents.defaults.model,
+                )
+            )
+            adjudicated = run_result.adjudicated
+            soul_markdown_override = adjudicated.soul_markdown
+            profile_override = adjudicated.profile
+            personality_values = adjudicated.profile.get("personality", {})
+            _report_soul_init_run(
+                ws,
+                run_result,
+                model=effective_cfg.agents.defaults.model,
+                targets=["SOUL.md", "SOUL_PROFILE.md"],
+            )
     except Exception:
-        console.print("[dim]  (Cognitive profile assessment skipped — will use defaults)[/dim]")
+        console.print("[dim]  (LLM soul init skipped — fallback initialization used)[/dim]")
 
-    # Create HEART.md
-    heart = HeartManager(ws)
-    heart.initialize(name, personality)
-    console.print("[green]✓[/green] HEART.md created")
-
-    # Create EVENTS.md
-    events = EventsManager(ws)
-    events.initialize(
-        ai_name=name,
-        ai_birthday=birthday,
-        user_name=user_name or "用户",
-        user_birthday=user_birthday or None,
+    bootstrap_workspace(
+        ws,
+        SoulInitPayload(
+            ai_name=name,
+            gender=gender,
+            birthday=birthday,
+            personality=personality,
+            relationship=relationship,
+            user_name=user_name,
+            user_birthday=user_birthday,
+        ),
+        personality_values=personality_values,
+        personality_markdown=personality_markdown,
+        soul_markdown_override=soul_markdown_override,
+        profile_override=profile_override,
     )
+    console.print("[green]✓[/green] IDENTITY.md created")
+    console.print("[green]✓[/green] SOUL.md created")
+    console.print("[green]✓[/green] HEART.md created")
     console.print("[green]✓[/green] EVENTS.md created")
+    console.print("[green]✓[/green] USER.md created")
+    console.print("[green]✓[/green] CORE_ANCHOR.md created")
+    console.print("[green]✓[/green] SOUL_METHOD.md created")
+    console.print("[green]✓[/green] SOUL_PROFILE.md created")
 
-    # Enable soul in config
-    if config:
-        import json as _json
-
-        from nanobot.config.loader import get_config_path
-
-        cp = get_config_path()
-        if cp.exists():
-            with open(cp, encoding="utf-8") as f:
-                cfg_data = _json.load(f)
-            cfg_data.setdefault("agents", {}).setdefault("defaults", {})["soul"] = {"enabled": True}
-            with open(cp, "w", encoding="utf-8") as f:
-                _json.dump(cfg_data, f, indent=2, ensure_ascii=False)
-            console.print("[green]✓[/green] Soul enabled in config")
+    # Enable soul in config when a config file is available
+    if resolved_config_path.exists():
+        cfg = load_config(resolved_config_path)
+        cfg.agents.defaults.soul.enabled = True
+        save_config(cfg, resolved_config_path)
+        console.print("[green]✓[/green] Soul enabled in config")
 
     console.print(f"\n{__logo__} {name} has been born!")
     console.print(f"  Gender: {gender}")

@@ -149,6 +149,21 @@ class TestDecisionFlow:
 
         assert result == "我刚刚想到你了"
 
+    @pytest.mark.asyncio
+    async def test_decide_and_generate_includes_extra_context(self, initialized_engine, mock_provider):
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content='{"want_to_reach_out": false, "tone": "克制", "message": "", "reason": "只是想起了一个特别日子"}'
+        )
+
+        await initialized_engine.decide_and_generate(
+            extra_context="今天有特别的日子：\n[anniversary] 我们认识的第一天"
+        )
+
+        messages = mock_provider.chat_with_retry.await_args.kwargs["messages"]
+        user_content = next(message["content"] for message in messages if message["role"] == "user")
+        assert "今天有特别的日子" in user_content
+        assert "anniversary" in user_content
+
 
 class TestDecisionParsing:
 
