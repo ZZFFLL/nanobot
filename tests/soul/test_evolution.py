@@ -236,14 +236,48 @@ class TestCheckEvolution:
 
 class TestApplyEvolution:
 
-    def test_apply_evolution_updates_soul(self, engine, workspace):
+    @pytest.mark.asyncio
+    async def test_apply_evolution_updates_soul(self, engine, mock_provider, workspace):
         """Evolution result should update SOUL.md."""
         from nanobot.soul.heart import HeartManager
+        from nanobot.soul.profile import SoulProfileManager
+
         hm = HeartManager(workspace)
         hm.initialize("小文", "温柔但倔强")
 
         soul_file = workspace / "SOUL.md"
-        soul_file.write_text("# 性格\n温柔但倔强，嘴硬心软\n", encoding="utf-8")
+        soul_file.write_text(
+            "# 性格\n\n温柔但倔强，嘴硬心软。\n\n# 初始关系\n\n还在慢慢感知彼此。\n",
+            encoding="utf-8",
+        )
+        SoulProfileManager(workspace).write({
+            "personality": FunctionProfile().to_json(),
+            "relationship": {
+                "stage": "熟悉",
+                "trust": 0.1,
+                "intimacy": 0.0,
+                "attachment": 0.0,
+                "security": 0.1,
+                "boundary": 0.9,
+                "affection": 0.0,
+            },
+            "companionship": {
+                "empathy_fit": 0.2,
+                "memory_fit": 0.0,
+                "naturalness": 0.2,
+                "initiative_quality": 0.0,
+                "scene_awareness": 0.1,
+                "boundary_expression": 0.9,
+            },
+        })
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content=(
+                "# 性格\n\n"
+                "她还是温柔但倔强，只是现在更愿意把照顾人的一面自然地露出来。\n\n"
+                "# 初始关系\n\n"
+                "她对用户的在意更稳定了，会克制地靠近，也不会丢掉自己的边界。\n"
+            )
+        )
 
         profile = FunctionProfile()
         evolution_result = {
@@ -253,14 +287,41 @@ class TestApplyEvolution:
             "profile": profile,
         }
 
-        engine.apply_evolution(evolution_result)
+        await engine.apply_evolution(evolution_result)
 
         updated_soul = soul_file.read_text(encoding="utf-8")
         assert "照顾人" in updated_soul
-        assert "成长痕迹" in updated_soul
+        assert "成长痕迹" not in updated_soul
 
-    def test_apply_evolution_no_soul_file(self, engine, workspace):
+    @pytest.mark.asyncio
+    async def test_apply_evolution_no_soul_file(self, engine, mock_provider, workspace):
         """No SOUL.md should not crash."""
+        from nanobot.soul.profile import SoulProfileManager
+
+        SoulProfileManager(workspace).write({
+            "personality": FunctionProfile().to_json(),
+            "relationship": {
+                "stage": "熟悉",
+                "trust": 0.1,
+                "intimacy": 0.0,
+                "attachment": 0.0,
+                "security": 0.1,
+                "boundary": 0.9,
+                "affection": 0.0,
+            },
+            "companionship": {
+                "empathy_fit": 0.2,
+                "memory_fit": 0.0,
+                "naturalness": 0.2,
+                "initiative_quality": 0.0,
+                "scene_awareness": 0.1,
+                "boundary_expression": 0.9,
+            },
+        })
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="# 性格\n\n变化。\n\n# 初始关系\n\n仍在谨慎靠近。\n"
+        )
+
         evolution_result = {
             "manifestation": "变化",
             "reason": "测试",
@@ -268,13 +329,58 @@ class TestApplyEvolution:
             "profile": FunctionProfile(),
         }
         # Should not raise
-        engine.apply_evolution(evolution_result)
+        await engine.apply_evolution(evolution_result)
 
-    def test_apply_evolution_no_personality_update(self, engine, workspace):
+    @pytest.mark.asyncio
+    async def test_apply_evolution_no_personality_update(self, engine, mock_provider, workspace):
         """No personality_update in result should not modify SOUL.md."""
         soul_file = workspace / "SOUL.md"
         original = "# 性格\n温柔\n"
         soul_file.write_text(original, encoding="utf-8")
 
-        engine.apply_evolution({"reason": "测试"})
+        await engine.apply_evolution({"reason": "测试"})
         assert soul_file.read_text(encoding="utf-8") == original
+        mock_provider.chat_with_retry.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_apply_evolution_rolls_back_profile_when_projection_fails(engine, mock_provider, workspace):
+    from nanobot.soul.profile import SoulProfileManager
+
+    original = FunctionProfile().to_json()
+    SoulProfileManager(workspace).write({
+        "personality": original,
+        "relationship": {
+            "stage": "熟悉",
+            "trust": 0.1,
+            "intimacy": 0.0,
+            "attachment": 0.0,
+            "security": 0.1,
+            "boundary": 0.9,
+            "affection": 0.0,
+        },
+        "companionship": {
+            "empathy_fit": 0.2,
+            "memory_fit": 0.0,
+            "naturalness": 0.2,
+            "initiative_quality": 0.0,
+            "scene_awareness": 0.1,
+            "boundary_expression": 0.9,
+        },
+    })
+    (workspace / "SOUL.md").write_text("# 性格\n\n原始画像。\n\n# 初始关系\n\n原始关系。\n", encoding="utf-8")
+    mock_provider.chat_with_retry.return_value = MagicMock(
+        content="# 性格\n\n{\"bad\": true}\n\n# 初始关系\n\nrelationship.stage=熟悉"
+    )
+
+    profile = FunctionProfile(dict(original))
+    profile.apply_change("Fe", "up", "测试")
+    await engine.apply_evolution({
+        "reason": "测试",
+        "changes": {"Fe": {"delta": 0.05, "reason": "测试"}},
+        "profile": profile,
+    })
+
+    saved = SoulProfileManager(workspace).read()
+    assert saved["personality"] == original
+    assert "原始画像" in (workspace / "SOUL.md").read_text(encoding="utf-8")

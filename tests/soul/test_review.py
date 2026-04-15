@@ -33,6 +33,10 @@ async def test_weekly_review_cycle_updates_profile_and_mentions_recent_materials
 
     HeartManager(tmp_path).initialize("小文", "温柔")
     (tmp_path / "CORE_ANCHOR.md").write_text("# 核心锚点\n\n- 不无底线顺从\n", encoding="utf-8")
+    (tmp_path / "SOUL.md").write_text(
+        "# 性格\n\n温柔，慢热，但会认真感受靠近与疏远。\n\n# 初始关系\n\n你和用户还不认识，对方仍然是一个陌生但值得观察的人。\n",
+        encoding="utf-8",
+    )
     SoulProfileManager(tmp_path).write({
         "personality": {"Fi": 0.8},
         "relationship": {
@@ -56,9 +60,19 @@ async def test_weekly_review_cycle_updates_profile_and_mentions_recent_materials
         ),
     )
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='{"current_stage_assessment":"熟悉","proposed_stage":"亲近","direction":"up","evidence_summary":"最近主动想起用户","dimension_changes":{"trust":0.2,"intimacy":0.1},"personality_influence":"Fi高时更容易建立情感链接","risk_flags":[],"confidence":0.8}'
-    ))
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        MagicMock(
+            content='{"current_stage_assessment":"熟悉","proposed_stage":"亲近","direction":"up","evidence_summary":"最近主动想起用户","dimension_changes":{"trust":0.2,"intimacy":0.1},"personality_influence":"Fi高时更容易建立情感链接","risk_flags":[],"confidence":0.8}'
+        ),
+        MagicMock(
+            content=(
+                "# 性格\n\n"
+                "她温柔、慢热，也会认真感受每一次靠近和退开。\n\n"
+                "# 初始关系\n\n"
+                "她已经开始更自然地靠近用户了，但仍会保留自己的分寸和边界。\n"
+            )
+        ),
+    ])
 
     builder = WeeklyReviewBuilder(provider=provider, model="test-model")
     content = await builder.build_cycle(tmp_path)
@@ -67,6 +81,8 @@ async def test_weekly_review_cycle_updates_profile_and_mentions_recent_materials
     assert updated["relationship"]["stage"] == "亲近"
     assert "最近主动想起用户" in content
     assert "今天过得怎么样？" in content
+    updated_soul = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+    assert "更自然地靠近用户" in updated_soul
 
 
 @pytest.mark.asyncio
@@ -88,9 +104,19 @@ async def test_weekly_review_cycle_parses_code_fenced_json(tmp_path):
         "companionship": {"empathy_fit": 0.2},
     })
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='```json\n{"current_stage_assessment":"熟悉","proposed_stage":"亲近","direction":"up","evidence_summary":"本周明显更靠近用户","dimension_changes":{"trust":0.2},"personality_influence":"Fi与Ne共同推动了连接感增强","risk_flags":[],"confidence":0.8}\n```'
-    ))
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        MagicMock(
+            content='```json\n{"current_stage_assessment":"熟悉","proposed_stage":"亲近","direction":"up","evidence_summary":"本周明显更靠近用户","dimension_changes":{"trust":0.2},"personality_influence":"Fi与Ne共同推动了连接感增强","risk_flags":[],"confidence":0.8}\n```'
+        ),
+        MagicMock(
+            content=(
+                "# 性格\n\n"
+                "她还是会慢慢观察，但靠近时已经比之前自然很多。\n\n"
+                "# 初始关系\n\n"
+                "她对用户的距离感明显缩短了，心里也更愿意把对方放近一些。\n"
+            )
+        ),
+    ])
 
     builder = WeeklyReviewBuilder(provider=provider, model="test-model")
     content = await builder.build_cycle(tmp_path)
@@ -119,14 +145,65 @@ async def test_weekly_review_cycle_includes_structured_profile_in_prompt(tmp_pat
         "companionship": {"empathy_fit": 0.2},
     })
     provider = MagicMock()
-    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='{"current_stage_assessment":"熟悉","proposed_stage":"熟悉","direction":"stable","evidence_summary":"保持稳定","dimension_changes":{},"personality_influence":"Fi 稳定发挥","risk_flags":[],"confidence":0.8}'
-    ))
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        MagicMock(
+            content='{"current_stage_assessment":"熟悉","proposed_stage":"熟悉","direction":"stable","evidence_summary":"保持稳定","dimension_changes":{},"personality_influence":"Fi 稳定发挥","risk_flags":[],"confidence":0.8}'
+        ),
+        MagicMock(
+            content=(
+                "# 性格\n\n"
+                "她仍旧细腻而克制，会把感受藏在稳定的语气之下。\n\n"
+                "# 初始关系\n\n"
+                "她和用户之间的关系暂时保持原来的节奏，没有明显推进，也没有明显后退。\n"
+            )
+        ),
+    ])
 
     builder = WeeklyReviewBuilder(provider=provider, model="test-model")
     await builder.build_cycle(tmp_path)
 
-    user_prompt = provider.chat_with_retry.await_args.kwargs["messages"][1]["content"]
+    user_prompt = provider.chat_with_retry.await_args_list[0].kwargs["messages"][1]["content"]
     assert "## 当前结构化画像" in user_prompt
     assert '"Fi": 0.8' in user_prompt
     assert '"trust": 0.3' in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_weekly_review_cycle_rolls_back_profile_when_projection_fails(tmp_path):
+    from nanobot.soul.heart import HeartManager
+
+    HeartManager(tmp_path).initialize("小文", "温柔")
+    SoulProfileManager(tmp_path).write({
+        "personality": {"Fi": 0.8},
+        "relationship": {
+            "stage": "熟悉",
+            "trust": 0.1,
+            "intimacy": 0.0,
+            "attachment": 0.0,
+            "security": 0.1,
+            "boundary": 0.9,
+            "affection": 0.0,
+        },
+        "companionship": {"empathy_fit": 0.2},
+    })
+    (tmp_path / "SOUL.md").write_text(
+        "# 性格\n\n稳定画像。\n\n# 初始关系\n\n仍在慢慢靠近。\n",
+        encoding="utf-8",
+    )
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(side_effect=[
+        MagicMock(
+            content='{"current_stage_assessment":"熟悉","proposed_stage":"亲近","direction":"up","evidence_summary":"证据充分","dimension_changes":{"trust":0.2},"personality_influence":"Fi高","risk_flags":[],"confidence":0.8}'
+        ),
+        MagicMock(
+            content="# 性格\n\n{\"bad\": true}\n\n# 初始关系\n\nrelationship.stage=亲近"
+        ),
+    ])
+
+    builder = WeeklyReviewBuilder(provider=provider, model="test-model")
+    content = await builder.build_cycle(tmp_path)
+
+    profile = SoulProfileManager(tmp_path).read()
+    assert profile["relationship"]["stage"] == "熟悉"
+    assert "证据充分" not in content
+    assert "稳定画像" in (tmp_path / "SOUL.md").read_text(encoding="utf-8")

@@ -1,0 +1,10 @@
+{
+  "init": {
+    "allowed_stages": [
+      "还不认识",
+      "熟悉"
+    ],
+    "relationship_boundary_min": 0.5,
+    "boundary_expression_min": 0.5
+  }
+}

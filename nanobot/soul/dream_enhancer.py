@@ -119,7 +119,7 @@ class SoulDreamEnhancer:
                 evo = EvolutionEngine(self.heart.workspace, self.provider, self.model)
                 evo_result = await evo.check_evolution()
                 if evo_result:
-                    evo.apply_evolution(evo_result)
+                    await evo.apply_evolution(evo_result)
                     changes = evo_result.get("changes", {})
                     funcs_changed = ", ".join(changes.keys()) if changes else ""
                     logger.info(

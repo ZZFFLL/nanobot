@@ -31,6 +31,7 @@ def normalize_candidate(
 
     return SoulInitCandidate(
         soul_markdown=_normalize_soul_markdown(candidate.soul_markdown, default_relationship),
+        heart_markdown=(candidate.heart_markdown or "").strip(),
         profile=_normalize_profile(candidate.profile),
     )
 

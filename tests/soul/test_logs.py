@@ -72,3 +72,50 @@ def test_log_writer_creates_init_trace_jsonl(tmp_path):
     assert "init" in str(path)
     assert '"stage": "adjudication"' in content
     assert "SOUL_PROFILE 候选非法" in content
+
+
+def test_log_writer_creates_init_audit_json(tmp_path):
+    writer = SoulLogWriter(tmp_path)
+
+    path = writer.write_init_audit(
+        "2026-04-15-110000",
+        {
+            "final_status": "accepted",
+            "used_fallback": False,
+            "result": {"soul_markdown": "# 性格\n\n测试\n"},
+        },
+    )
+
+    content = path.read_text(encoding="utf-8")
+    assert path.exists()
+    assert "init" in str(path)
+    assert '"final_status": "accepted"' in content
+    assert '"used_fallback": false' in content.lower()
+
+
+def test_log_writer_creates_projection_trace_and_audit(tmp_path):
+    writer = SoulLogWriter(tmp_path)
+
+    trace_path = writer.write_projection_trace(
+        "2026-04-15-120000",
+        [
+            {
+                "attempt": 1,
+                "stage": "validation",
+                "status": "accepted",
+            }
+        ],
+    )
+    audit_path = writer.write_projection_audit(
+        "2026-04-15-120000",
+        {
+            "final_status": "accepted",
+            "trigger": "review",
+            "result": {"soul_markdown": "# 性格\n\n测试\n"},
+        },
+    )
+
+    assert trace_path.exists()
+    assert audit_path.exists()
+    assert "projection" in str(trace_path)
+    assert "projection" in str(audit_path)

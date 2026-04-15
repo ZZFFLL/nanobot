@@ -91,7 +91,7 @@ class TestSoulEngine:
         system_msg = context.messages[0]
         assert "情绪" in system_msg["content"]
 
-    async def test_before_iteration_injects_anchor_and_profile_context(self, workspace, mock_provider):
+    async def test_before_iteration_injects_anchor_but_not_profile_context(self, workspace, mock_provider):
         engine = SoulEngine(workspace, mock_provider, "test-model")
         engine.initialize("小文", "测试")
         (workspace / "CORE_ANCHOR.md").write_text(
@@ -112,7 +112,7 @@ class TestSoulEngine:
 
         system_msg = context.messages[0]
         assert "核心锚点" in system_msg["content"]
-        assert "当前关系阶段" in system_msg["content"]
+        assert "当前结构化画像" not in system_msg["content"]
 
     async def test_before_iteration_injects_anchor_refusal_guard_for_override_request(self, workspace, mock_provider):
         engine = SoulEngine(workspace, mock_provider, "test-model")
@@ -195,6 +195,24 @@ class TestSoulEngine:
         result = await engine.update_heart("你好", "嗨")
         assert result is False
         assert engine.heart.read_text() == old_text
+
+    async def test_update_heart_rejects_incomplete_heart_markdown(
+        self, engine, mock_provider, workspace
+    ):
+        from nanobot.soul.heart import HeartManager
+
+        HeartManager(workspace).initialize("小文", "温柔")
+        old_text = (workspace / "HEART.md").read_text(encoding="utf-8")
+        mock_provider.chat_with_retry.return_value = MagicMock(
+            content="## 当前情绪\n有点开心\n\n## 情绪强度\n中\n"
+        )
+
+        result = await engine.update_heart("你好", "我也在")
+
+        assert result is False
+        saved = (workspace / "HEART.md").read_text(encoding="utf-8")
+        assert saved == old_text
+        assert "当前渴望" in saved
 
     async def test_before_iteration_no_heart_does_nothing(self, workspace, mock_provider):
         engine = SoulEngine(workspace, mock_provider, "test-model")

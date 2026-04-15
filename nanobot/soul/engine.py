@@ -183,26 +183,7 @@ class SoulEngine:
 
     def get_profile_context(self) -> str | None:
         """Get SOUL_PROFILE.md summary for context injection."""
-        profile = SoulProfileManager(self.workspace).read()
-        relationship = profile.get("relationship", {})
-        companionship = profile.get("companionship", {})
-        stage = relationship.get("stage", "熟悉")
-        trust = relationship.get("trust", 0.0)
-        intimacy = relationship.get("intimacy", 0.0)
-        attachment = relationship.get("attachment", 0.0)
-        affection = relationship.get("affection", 0.0)
-        empathy_fit = companionship.get("empathy_fit", 0.0)
-        return (
-            "# 当前结构化画像（系统维护的慢变量状态）\n\n"
-            f"## 当前关系阶段\n{stage}\n\n"
-            "## 关系维度\n"
-            f"- trust: {trust}\n"
-            f"- intimacy: {intimacy}\n"
-            f"- attachment: {attachment}\n"
-            f"- affection: {affection}\n\n"
-            "## 陪伴能力\n"
-            f"- empathy_fit: {empathy_fit}\n"
-        )
+        return None
 
     async def write_memory(self, user_msg: str, ai_msg: str) -> None:
         """Async write dual-perspective memory."""
@@ -291,7 +272,6 @@ class SoulHook(AgentHook):
         user_text = self._latest_user_text(context.messages)
         user_query = self._strip_runtime_context(user_text)
         anchor_ctx = self.engine.get_anchor_context()
-        profile_ctx = self.engine.get_profile_context()
         anchor_guard = None
         if self._looks_like_anchor_override(user_query):
             anchor_guard = self._build_anchor_guard_context()
@@ -303,8 +283,6 @@ class SoulHook(AgentHook):
             parts = [existing, heart_ctx]
             if anchor_ctx:
                 parts.append(anchor_ctx)
-            if profile_ctx:
-                parts.append(profile_ctx)
             if anchor_guard:
                 parts.append(anchor_guard)
             system_msg["content"] = "\n\n".join(part for part in parts if part)
@@ -312,8 +290,6 @@ class SoulHook(AgentHook):
             parts = [heart_ctx]
             if anchor_ctx:
                 parts.append(anchor_ctx)
-            if profile_ctx:
-                parts.append(profile_ctx)
             if anchor_guard:
                 parts.append(anchor_guard)
             context.messages.insert(0, {"role": "system", "content": "\n\n".join(parts)})

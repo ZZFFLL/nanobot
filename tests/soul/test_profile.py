@@ -21,6 +21,6 @@ def test_profile_manager_returns_default_profile_when_missing(tmp_path):
 
     profile = manager.read()
 
-    assert profile["relationship"]["stage"] == "熟悉"
+    assert profile["relationship"]["stage"] == "还不认识"
     assert "personality" in profile
     assert "companionship" in profile

@@ -20,6 +20,8 @@ from typing import TYPE_CHECKING, Any
 from loguru import logger
 
 from nanobot.soul.heart import HeartManager
+from nanobot.soul.profile import SoulProfileManager
+from nanobot.soul.projection import SoulProjectionError, project_soul_from_profile
 from nanobot.soul.proactive import _extract_section
 
 if TYPE_CHECKING:
@@ -284,10 +286,9 @@ class EvolutionEngine:
         if arc_count < threshold:
             return None
 
-        # Read current function profile from SOUL.md
-        soul_file = self.workspace / "SOUL.md"
-        profile_text = soul_file.read_text(encoding="utf-8") if soul_file.exists() else ""
-        profile = FunctionProfile.from_markdown(profile_text) or FunctionProfile()
+        # Read current function profile from SOUL_PROFILE.md
+        structured = SoulProfileManager(self.workspace).read().get("personality", {})
+        profile = FunctionProfile.from_json(structured) if structured else FunctionProfile()
         profile_table = profile.to_markdown()
 
         try:
@@ -367,43 +368,41 @@ class EvolutionEngine:
             logger.exception("EvolutionEngine: evolution check failed")
             return None
 
-    def apply_evolution(self, result: dict[str, Any]) -> None:
-        """Apply evolution result to SOUL.md.
+    async def apply_evolution(self, result: dict[str, Any]) -> None:
+        """Apply evolution result to SOUL_PROFILE.md and sync SOUL.md.
 
         Uses the pre-computed quantitative changes from check_evolution.
-        Updates the cognitive function profile table and personality sections.
+        Updates structured personality values, then refreshes SOUL.md.
         """
-        soul_file = self.workspace / "SOUL.md"
-        if not soul_file.exists():
-            return
-
         profile: FunctionProfile = result.get("profile", FunctionProfile())
-        manifestation = result.get("manifestation", "")
         reason = result.get("reason", "")
         changes = result.get("changes", {})
 
         if not changes:
             return
 
-        current = soul_file.read_text(encoding="utf-8")
+        profile_mgr = SoulProfileManager(self.workspace)
+        base_profile = profile_mgr.read()
+        candidate_profile = profile_mgr.personality_candidate(base_profile, profile.to_json())
+        try:
+            await project_soul_from_profile(
+                self.workspace,
+                provider=self.provider,
+                model=self.model,
+                profile_override=candidate_profile,
+                trigger="evolution",
+            )
+        except SoulProjectionError as exc:
+            logger.warning("EvolutionEngine: SOUL projection skipped: {}", exc)
+            return
 
-        # 1. Update or create cognitive function profile section
-        current = self._update_profile_section(current, profile)
-
-        # 2. Update # 性格 section with manifestation
-        if manifestation:
-            current = self._update_section(current, "性格", manifestation)
-
-        # 3. Append growth trace
+        # Commit profile only after projection succeeds.
+        profile_mgr.write(candidate_profile)
         changed_funcs = ", ".join(
             f"{f}({'↑' if d['delta'] > 0 else '↓'}{abs(d['delta']):.3f})"
             for f, d in changes.items()
         )
-        trace_text = f"{changed_funcs} — {manifestation}" if manifestation else changed_funcs
-        current = self._append_growth_trace(current, trace_text, reason)
-
-        soul_file.write_text(current, encoding="utf-8")
-        logger.info("性格演化已应用到 SOUL.md: {}", trace_text)
+        logger.info("性格演化已应用到 SOUL_PROFILE.md 并同步 SOUL.md: {} ({})", changed_funcs, reason)
 
     @staticmethod
     def _update_profile_section(text: str, profile: FunctionProfile) -> str:

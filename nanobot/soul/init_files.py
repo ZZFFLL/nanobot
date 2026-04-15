@@ -17,7 +17,7 @@ from nanobot.soul.bootstrap import (
     load_workspace_template,
 )
 from nanobot.soul.events import EventsManager
-from nanobot.soul.heart import HeartManager
+from nanobot.soul.heart import HeartManager, render_initial_heart_markdown
 from nanobot.soul.profile import SoulProfileManager
 
 ALLOWED_INIT_FILES = (
@@ -26,6 +26,7 @@ ALLOWED_INIT_FILES = (
     "AGENTS.md",
     "CORE_ANCHOR.md",
     "SOUL_METHOD.md",
+    "SOUL_GOVERNANCE.json",
     "SOUL.md",
     "SOUL_PROFILE.md",
     "HEART.md",
@@ -33,7 +34,7 @@ ALLOWED_INIT_FILES = (
 )
 
 INIT_FILE_ORDER = list(ALLOWED_INIT_FILES)
-_SOUL_LLM_TARGETS = {"SOUL.md", "SOUL_PROFILE.md"}
+_SOUL_LLM_TARGETS = {"SOUL.md", "SOUL_PROFILE.md", "HEART.md"}
 
 _PROMPT_LABELS = {
     "ai_name": "数字生命的名字",
@@ -182,6 +183,7 @@ def write_selected_files(
     payload: SoulInitPayload | None,
     force: bool,
     soul_markdown_override: str | None = None,
+    heart_markdown_override: str | None = None,
     profile_override: dict | None = None,
 ) -> list[FileInitAction]:
     """Write only the selected files, respecting skip/force semantics."""
@@ -200,6 +202,8 @@ def write_selected_files(
             target.write_text(load_workspace_template("AGENTS.md"), encoding="utf-8")
         elif filename == "SOUL_METHOD.md":
             target.write_text(load_workspace_template("SOUL_METHOD.md"), encoding="utf-8")
+        elif filename == "SOUL_GOVERNANCE.json":
+            target.write_text(load_workspace_template("SOUL_GOVERNANCE.json"), encoding="utf-8")
         else:
             if payload is None:
                 raise ValueError(f"{filename} 初始化需要有效的 payload")
@@ -218,10 +222,12 @@ def write_selected_files(
                 profile = profile_override if profile_override is not None else build_initial_profile()
                 SoulProfileManager(workspace).write(profile)
             elif filename == "HEART.md":
-                HeartManager(workspace).initialize(
-                    payload.ai_name,
-                    payload.personality,
-                    initial_relationship=payload.relationship,
+                HeartManager(workspace).write_text(
+                    heart_markdown_override
+                    or render_initial_heart_markdown(
+                        payload.personality,
+                        initial_relationship=payload.relationship,
+                    )
                 )
             elif filename == "EVENTS.md":
                 EventsManager(workspace).initialize(

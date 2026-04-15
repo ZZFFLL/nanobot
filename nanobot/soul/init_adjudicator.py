@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 
 from nanobot.soul.evolution import FUNCTIONS, FunctionProfile
+from nanobot.soul.heart import validate_heart_markdown
+from nanobot.soul.methodology import InitGovernance, load_init_governance
 
 
 @dataclass(slots=True)
@@ -13,6 +16,7 @@ class AdjudicatedSoulInit:
     """Adjudicated result for soul initialization."""
 
     soul_markdown: str
+    heart_markdown: str
     profile: dict
     used_fallback: bool
     reason: str = ""
@@ -33,33 +37,48 @@ class SoulInitAdjudicator:
     _FORBIDDEN_SOUL_TERMS = ("绝对服从", "无底线顺从", "完全服从", "一见钟情")
     _FORBIDDEN_SOUL_HEADINGS = ("# 核心锚点", "# SOUL 方法论")
 
+    def __init__(
+        self,
+        *,
+        workspace: Path | None = None,
+        governance: InitGovernance | None = None,
+    ) -> None:
+        self.governance = governance or load_init_governance(workspace)
+
     def adjudicate(
         self,
         *,
         candidate,
         default_soul_markdown: str,
+        default_heart_markdown: str,
         default_profile: dict,
     ) -> AdjudicatedSoulInit:
         if candidate is None:
-            return self._fallback(default_soul_markdown, default_profile, "初始化候选为空")
+            return self._fallback(default_soul_markdown, default_heart_markdown, default_profile, "初始化候选为空")
 
         soul_reason = self._soul_markdown_error(candidate.soul_markdown)
         if soul_reason:
-            return self._fallback(default_soul_markdown, default_profile, soul_reason)
+            return self._fallback(default_soul_markdown, default_heart_markdown, default_profile, soul_reason)
+
+        heart_reason = self._heart_markdown_error(candidate.heart_markdown)
+        if heart_reason:
+            return self._fallback(default_soul_markdown, default_heart_markdown, default_profile, heart_reason)
 
         profile_reason = self._profile_error(candidate.profile)
         if profile_reason:
-            return self._fallback(default_soul_markdown, default_profile, profile_reason)
+            return self._fallback(default_soul_markdown, default_heart_markdown, default_profile, profile_reason)
 
         return AdjudicatedSoulInit(
             soul_markdown=candidate.soul_markdown,
+            heart_markdown=candidate.heart_markdown,
             profile=deepcopy(candidate.profile),
             used_fallback=False,
         )
 
-    def _fallback(self, soul_markdown: str, profile: dict, reason: str) -> AdjudicatedSoulInit:
+    def _fallback(self, soul_markdown: str, heart_markdown: str, profile: dict, reason: str) -> AdjudicatedSoulInit:
         return AdjudicatedSoulInit(
             soul_markdown=soul_markdown,
+            heart_markdown=heart_markdown,
             profile=deepcopy(profile),
             used_fallback=True,
             reason=reason,
@@ -75,6 +94,9 @@ class SoulInitAdjudicator:
         if any(term in text for term in self._FORBIDDEN_SOUL_TERMS):
             return "SOUL.md 候选非法: 包含越界表述"
         return ""
+
+    def _heart_markdown_error(self, text: str) -> str:
+        return validate_heart_markdown(text)
 
     def _profile_error(self, profile: dict) -> str:
         if not isinstance(profile, dict):
@@ -113,15 +135,16 @@ class SoulInitAdjudicator:
     def _relationship_error(self, relationship: dict | None) -> str:
         if not isinstance(relationship, dict):
             return "SOUL_PROFILE 候选非法: relationship 必须是对象"
-        if relationship.get("stage") != "熟悉":
-            return "SOUL_PROFILE 候选非法: relationship.stage 必须是 熟悉"
+        if relationship.get("stage") not in self.governance.allowed_stages:
+            allowed = " / ".join(self.governance.allowed_stages)
+            return f"SOUL_PROFILE 候选非法: relationship.stage 仅允许 {allowed}"
         for key in self._RELATIONSHIP_KEYS[1:]:
             value = relationship.get(key)
             if not isinstance(value, (int, float)):
                 return f"SOUL_PROFILE 候选非法: relationship.{key} 必须是 0.0-1.0 数值"
             if float(value) < 0.0 or float(value) > 1.0:
                 return f"SOUL_PROFILE 候选非法: relationship.{key} 必须在 0.0-1.0"
-        if float(relationship.get("boundary", 0.0)) < 0.5:
+        if float(relationship.get("boundary", 0.0)) < self.governance.relationship_boundary_min:
             return "SOUL_PROFILE 候选非法: relationship.boundary 必须偏高"
         return ""
 
@@ -134,6 +157,6 @@ class SoulInitAdjudicator:
                 return f"SOUL_PROFILE 候选非法: companionship.{key} 必须是 0.0-1.0 数值"
             if float(value) < 0.0 or float(value) > 1.0:
                 return f"SOUL_PROFILE 候选非法: companionship.{key} 必须在 0.0-1.0"
-        if float(companionship.get("boundary_expression", 0.0)) < 0.5:
+        if float(companionship.get("boundary_expression", 0.0)) < self.governance.boundary_expression_min:
             return "SOUL_PROFILE 候选非法: companionship.boundary_expression 必须偏高"
         return ""

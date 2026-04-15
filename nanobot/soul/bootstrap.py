@@ -10,12 +10,16 @@ from pathlib import Path
 
 from nanobot.soul.events import EventsManager
 from nanobot.soul.evolution import FunctionProfile
-from nanobot.soul.heart import HeartManager
+from nanobot.soul.heart import HeartManager, render_initial_heart_markdown
 from nanobot.soul.init_adjudicator import AdjudicatedSoulInit, SoulInitAdjudicator
 from nanobot.soul.init_inference import SoulInitInference
 from nanobot.soul.init_normalizer import normalize_candidate
 from nanobot.soul.init_trace import SoulInitTrace
-from nanobot.soul.methodology import RELATIONSHIP_DIMENSIONS, build_default_profile
+from nanobot.soul.methodology import (
+    RELATIONSHIP_DIMENSIONS,
+    build_default_profile,
+    render_soul_method_markdown,
+)
 from nanobot.soul.profile import SoulProfileManager
 
 
@@ -47,6 +51,7 @@ def bootstrap_workspace(
     personality_values: dict[str, float] | None = None,
     personality_markdown: str | None = None,
     soul_markdown_override: str | None = None,
+    heart_markdown_override: str | None = None,
     profile_override: dict | None = None,
 ) -> None:
     """Create or overwrite the soul workspace files for Phase 1."""
@@ -81,12 +86,16 @@ def bootstrap_workspace(
         load_workspace_template("SOUL_METHOD.md"),
         encoding="utf-8",
     )
+    (workspace / "SOUL_GOVERNANCE.json").write_text(
+        load_workspace_template("SOUL_GOVERNANCE.json"),
+        encoding="utf-8",
+    )
 
-    HeartManager(workspace).initialize(
-        payload.ai_name,
+    heart_markdown = heart_markdown_override or render_initial_heart_markdown(
         payload.personality,
         initial_relationship=payload.relationship,
     )
+    HeartManager(workspace).write_text(heart_markdown)
     EventsManager(workspace).initialize(
         ai_name=payload.ai_name,
         ai_birthday=payload.birthday,
@@ -107,7 +116,6 @@ def build_initial_profile(personality_values: dict[str, float] | None = None) ->
     profile = build_default_profile()
     profile["personality"] = personality_values or FunctionProfile().to_json()
     relationship = profile["relationship"]
-    relationship["stage"] = "熟悉"
     for name in RELATIONSHIP_DIMENSIONS:
         relationship.setdefault(name, 0.0 if name != "boundary" else 1.0)
     return profile
@@ -141,15 +149,6 @@ def build_soul_markdown(
         "",
         payload.relationship,
     ]
-    if personality_markdown:
-        sections.extend([
-            "",
-            "# 认知功能图谱",
-            "",
-            "> 此章节由系统自动管理，不建议手动编辑",
-            "",
-            personality_markdown,
-        ])
     return "\n".join(sections).rstrip() + "\n"
 
 
@@ -182,31 +181,14 @@ def build_core_anchor_markdown(payload: SoulInitPayload) -> str:
 def build_soul_method_markdown() -> str:
     """Render ``SOUL_METHOD.md``."""
 
-    return (
-        "# SOUL 方法论\n\n"
-        "## 人格演化\n"
-        "- 主轴: 荣格八维\n"
-        "- 原则: 人格慢变，不能被单轮对话直接重写\n\n"
-        "## 关系演化\n"
-        "- 关系维度: trust / intimacy / attachment / security / boundary / affection\n"
-        "- 关系阶段: 熟悉 -> 亲近 -> 依恋 -> 深度依恋 -> 喜欢 -> 爱意\n"
-        "- 原则: 关系支持升级、降级、修复，但必须按周期治理，不做即时跳变\n\n"
-        "## 情绪演化\n"
-        "- 模型: 事件 -> 感受 -> 脉络 -> 沉淀\n"
-        "- 原则: 情绪快变，但仍受方法论边界约束\n\n"
-        "## 陪伴能力\n"
-        "- 维度: empathy_fit / memory_fit / naturalness / initiative_quality / scene_awareness / boundary_expression\n"
-        "- 原则: 可提升也可退化，不直接改写核心锚点\n\n"
-        "## 治理节奏\n"
-        "- 周复盘\n"
-        "- 月校准\n"
-        "- 人工干预\n"
-    )
+    return render_soul_method_markdown()
 
 
 def load_workspace_template(filename: str) -> str:
     """Load a bundled workspace template file as UTF-8 text."""
 
+    if filename == "SOUL_METHOD.md":
+        return render_soul_method_markdown()
     template = pkg_files("nanobot") / "templates" / filename
     return template.read_text(encoding="utf-8")
 
@@ -216,13 +198,18 @@ async def infer_adjudicated_soul_init(
     *,
     provider,
     model: str,
+    workspace: Path | None = None,
 ) -> SoulInitRunResult:
     """Build and adjudicate an LLM-backed initialization candidate."""
 
     default_profile = build_initial_profile()
     default_soul_markdown = build_soul_markdown(payload)
-    inference = SoulInitInference(provider=provider, model=model)
-    adjudicator = SoulInitAdjudicator()
+    default_heart_markdown = render_initial_heart_markdown(
+        payload.personality,
+        initial_relationship=payload.relationship,
+    )
+    inference = SoulInitInference(provider=provider, model=model, workspace=workspace)
+    adjudicator = SoulInitAdjudicator(workspace=workspace)
     trace = SoulInitTrace(max_attempts=3)
     last_reason = "初始化候选为空"
     last_raw_output = ""
@@ -282,6 +269,7 @@ async def infer_adjudicated_soul_init(
         adjudicated = adjudicator.adjudicate(
             candidate=normalized_candidate,
             default_soul_markdown=default_soul_markdown,
+            default_heart_markdown=default_heart_markdown,
             default_profile=default_profile,
         )
         if adjudicated.used_fallback:
@@ -304,6 +292,7 @@ async def infer_adjudicated_soul_init(
 
     fallback = AdjudicatedSoulInit(
         soul_markdown=default_soul_markdown,
+        heart_markdown=default_heart_markdown,
         profile=deepcopy(default_profile),
         used_fallback=True,
         reason=last_reason,

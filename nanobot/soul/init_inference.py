@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
 import re
 
 import json_repair
@@ -25,8 +26,9 @@ REPAIR_SOUL_PROMPT = (
 
 STRICT_SCHEMA_TEXT = (
     "输出格式必须严格是："
-    '{"soul_markdown":"","profile":{"personality":{"Fi":0.00,"Fe":0.00,"Ti":0.00,"Te":0.00,"Si":0.00,"Se":0.00,"Ni":0.00,"Ne":0.00},"relationship":{"stage":"熟悉","trust":0.00,"intimacy":0.00,"attachment":0.00,"security":0.00,"boundary":0.00,"affection":0.00},"companionship":{"empathy_fit":0.00,"memory_fit":0.00,"naturalness":0.00,"initiative_quality":0.00,"scene_awareness":0.00,"boundary_expression":0.00}}}。'
+    '{"soul_markdown":"","heart_markdown":"","profile":{"personality":{"Fi":0.00,"Fe":0.00,"Ti":0.00,"Te":0.00,"Si":0.00,"Se":0.00,"Ni":0.00,"Ne":0.00},"relationship":{"stage":"还不认识","trust":0.00,"intimacy":0.00,"attachment":0.00,"security":0.00,"boundary":0.00,"affection":0.00},"companionship":{"empathy_fit":0.00,"memory_fit":0.00,"naturalness":0.00,"initiative_quality":0.00,"scene_awareness":0.00,"boundary_expression":0.00}}}。'
     "其中 soul_markdown 必须是 markdown 字符串，且只能包含这两个一级标题，顺序固定：# 性格、# 初始关系。"
+    "heart_markdown 必须是 markdown 字符串，且必须包含这些二级标题：## 当前情绪、## 情绪强度、## 关系状态、## 性格表现、## 情感脉络、## 情绪趋势、## 当前渴望。"
     "不要输出 # 核心锚点、# SOUL 方法论、或任何其他一级标题。"
     "personality 必须是荣格八维 8 个字段，值必须是 0.0 到 1.0 的小数。"
     "relationship 与 companionship 必须是扁平对象，不允许 dimensions 嵌套。"
@@ -40,6 +42,7 @@ class SoulInitCandidate:
     """Candidate soul initialization payload proposed by the LLM."""
 
     soul_markdown: str
+    heart_markdown: str
     profile: dict
 
 
@@ -62,11 +65,13 @@ def parse_soul_init_candidate(text: str) -> SoulInitCandidate | None:
         return None
 
     soul_markdown = payload.get("soul_markdown")
+    heart_markdown = payload.get("heart_markdown")
     profile = payload.get("profile")
-    if not isinstance(soul_markdown, str) or not isinstance(profile, dict):
+    if not isinstance(soul_markdown, str) or not isinstance(heart_markdown, str) or not isinstance(profile, dict):
         return None
     return SoulInitCandidate(
         soul_markdown=soul_markdown.strip(),
+        heart_markdown=heart_markdown.strip(),
         profile=profile,
     )
 
@@ -103,9 +108,12 @@ def _extract_json_payload(text: str) -> dict | None:
 class SoulInitInference:
     """Call the configured provider to build an initialization candidate."""
 
-    def __init__(self, provider, model: str) -> None:
+    def __init__(self, provider, model: str, *, workspace: Path | None = None) -> None:
+        from nanobot.soul.methodology import load_init_governance
+
         self.provider = provider
         self.model = model
+        self.governance = load_init_governance(workspace)
 
     async def infer(
         self,
@@ -207,7 +215,10 @@ class SoulInitInference:
                     f"## 核心锚点\n{core_anchor_text}\n\n"
                     f"## SOUL 方法论\n{soul_method_text}\n\n"
                     f"{STRICT_SCHEMA_TEXT}\n\n"
-                    "额外要求：relationship.stage 只能是“熟悉”；boundary 与 boundary_expression 必须偏高；不要输出解释性文字。"
+                    f"额外要求：relationship.stage 只能是“{' / '.join(self.governance.allowed_stages)}”中的一个，并且要根据初始关系描述自行判断；"
+                    f"relationship.boundary 至少 {self.governance.relationship_boundary_min:.2f}；"
+                    f"boundary_expression 至少 {self.governance.boundary_expression_min:.2f}；"
+                    "不要输出解释性文字。"
                 ),
             },
         ]
@@ -239,7 +250,10 @@ class SoulInitInference:
                     f"## 上一轮失败原因\n{rejection_reason}\n\n"
                     "## 上一轮无效候选\n"
                     f"{previous_output}\n\n"
-                    "请只输出修复后的严格 JSON。优先修复标题结构、字段结构、数值范围和方法论映射。"
+                    f"请只输出修复后的严格 JSON。优先修复标题结构、字段结构、数值范围和方法论映射。"
+                    f"relationship.stage 只能是“{' / '.join(self.governance.allowed_stages)}”中的一个；"
+                    f"relationship.boundary 至少 {self.governance.relationship_boundary_min:.2f}；"
+                    f"boundary_expression 至少 {self.governance.boundary_expression_min:.2f}。"
                 ),
             },
         ]

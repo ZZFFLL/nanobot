@@ -1,5 +1,6 @@
 """Tests for soul init inference protocol."""
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +12,7 @@ def test_parse_soul_init_candidate_from_code_fenced_json():
     text = """```json
 {
   "soul_markdown": "# 性格\\n\\n温柔但克制\\n\\n# 初始关系\\n\\n刚刚认识",
+  "heart_markdown": "## 当前情绪\\n刚刚诞生，有些紧张。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n还在慢慢感知用户。\\n\\n## 性格表现\\n温柔但克制\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想先理解眼前的人。",
   "profile": {
     "personality": {"Fi": 0.8, "Fe": 0.3, "Ti": 0.2, "Te": 0.1, "Si": 0.5, "Se": 0.1, "Ni": 0.2, "Ne": 0.5},
     "relationship": {"stage": "熟悉", "trust": 0.1, "intimacy": 0.0, "attachment": 0.0, "security": 0.1, "boundary": 0.9, "affection": 0.0},
@@ -23,6 +25,7 @@ def test_parse_soul_init_candidate_from_code_fenced_json():
 
     assert isinstance(candidate, SoulInitCandidate)
     assert "温柔但克制" in candidate.soul_markdown
+    assert "当前情绪" in candidate.heart_markdown
     assert candidate.profile["relationship"]["stage"] == "熟悉"
 
 
@@ -40,7 +43,7 @@ async def test_inference_calls_provider_and_parses_response():
 
     async def _chat_with_retry(**_kwargs):
         return SimpleNamespace(
-            content='{"soul_markdown":"# 性格\\n\\n细腻\\n\\n# 初始关系\\n\\n谨慎靠近","profile":{"personality":{"Fi":0.8,"Fe":0.3,"Ti":0.2,"Te":0.1,"Si":0.5,"Se":0.1,"Ni":0.2,"Ne":0.5},"relationship":{"stage":"熟悉","trust":0.1,"intimacy":0.0,"attachment":0.0,"security":0.1,"boundary":0.9,"affection":0.0},"companionship":{"empathy_fit":0.2,"memory_fit":0.0,"naturalness":0.2,"initiative_quality":0.0,"scene_awareness":0.1,"boundary_expression":0.9}}}'
+            content='{"soul_markdown":"# 性格\\n\\n细腻\\n\\n# 初始关系\\n\\n谨慎靠近","heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低\\n\\n## 关系状态\\n正在观察。\\n\\n## 性格表现\\n细腻\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。","profile":{"personality":{"Fi":0.8,"Fe":0.3,"Ti":0.2,"Te":0.1,"Si":0.5,"Se":0.1,"Ni":0.2,"Ne":0.5},"relationship":{"stage":"熟悉","trust":0.1,"intimacy":0.0,"attachment":0.0,"security":0.1,"boundary":0.9,"affection":0.0},"companionship":{"empathy_fit":0.2,"memory_fit":0.0,"naturalness":0.2,"initiative_quality":0.0,"scene_awareness":0.1,"boundary_expression":0.9}}}'
         )
 
     provider.chat_with_retry = _chat_with_retry
@@ -56,4 +59,53 @@ async def test_inference_calls_provider_and_parses_response():
     )
 
     assert isinstance(candidate, SoulInitCandidate)
+    assert "当前情绪" in candidate.heart_markdown
     assert candidate.profile["companionship"]["naturalness"] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_inference_uses_workspace_governance_in_prompt(tmp_path):
+    from nanobot.soul.init_inference import SoulInitInference
+
+    (tmp_path / "SOUL_GOVERNANCE.json").write_text(
+        json.dumps(
+            {
+                "init": {
+                    "allowed_stages": ["还不认识"],
+                    "relationship_boundary_min": 0.88,
+                    "boundary_expression_min": 0.91,
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    seen_messages: list[dict[str, str]] = []
+
+    async def _chat_with_retry(**kwargs):
+        seen_messages.extend(kwargs["messages"])
+        return SimpleNamespace(
+            content='{"soul_markdown":"# 性格\\n\\n细腻\\n\\n# 初始关系\\n\\n谨慎靠近","heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低\\n\\n## 关系状态\\n谨慎靠近。\\n\\n## 性格表现\\n细腻\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。","profile":{"personality":{"Fi":0.8,"Fe":0.3,"Ti":0.2,"Te":0.1,"Si":0.5,"Se":0.1,"Ni":0.2,"Ne":0.5},"relationship":{"stage":"还不认识","trust":0.0,"intimacy":0.0,"attachment":0.0,"security":0.0,"boundary":0.9,"affection":0.0},"companionship":{"empathy_fit":0.2,"memory_fit":0.0,"naturalness":0.2,"initiative_quality":0.0,"scene_awareness":0.1,"boundary_expression":0.95}}}'
+        )
+
+    inference = SoulInitInference(
+        provider=SimpleNamespace(chat_with_retry=_chat_with_retry),
+        model="test-model",
+        workspace=tmp_path,
+    )
+
+    await inference.infer(
+        ai_name="温予安",
+        personality="温柔但倔强",
+        relationship="刚刚认识用户",
+        user_name="阿峰",
+        core_anchor_text="# 核心锚点\n- 不无底线顺从",
+        soul_method_text="# SOUL 方法论\n- 主轴: 荣格八维",
+    )
+
+    user_prompt = next(message["content"] for message in seen_messages if message["role"] == "user")
+    assert "relationship.stage 只能是“还不认识”中的一个" in user_prompt
+    assert "relationship.boundary 至少 0.88" in user_prompt
+    assert "boundary_expression 至少 0.91" in user_prompt
+    assert "heart_markdown" in user_prompt

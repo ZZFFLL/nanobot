@@ -705,7 +705,10 @@ def gateway(
                 from nanobot.soul.logs import SoulLogWriter
                 from nanobot.soul.review import WeeklyReviewBuilder
 
-                content = WeeklyReviewBuilder().build(config.workspace_path)
+                content = await WeeklyReviewBuilder(
+                    provider=provider,
+                    model=agent.model,
+                ).build_cycle(config.workspace_path)
                 SoulLogWriter(config.workspace_path).write_weekly(
                     _dt.now().strftime("%Y-%m-%d"),
                     content,
@@ -1516,23 +1519,47 @@ def _print_soul_init_trace(trace) -> None:
         console.print(f"[dim]• {line}[/dim]")
 
 
-def _write_soul_init_trace(workspace: Path, trace, *, model: str, targets: list[str] | None = None) -> None:
+def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
     from datetime import datetime
 
     from nanobot.soul.logs import SoulLogWriter
+    from nanobot.soul.methodology import load_init_governance
 
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    path = SoulLogWriter(workspace).write_init_trace(
+    writer = SoulLogWriter(workspace)
+    trace_path = writer.write_init_trace(
         stamp,
-        trace.to_log_records(model=model, targets=targets),
+        run_result.trace.to_log_records(model=model, targets=targets),
     )
-    console.print(f"[dim]  trace saved: {path}[/dim]")
+    console.print(f"[dim]  trace saved: {trace_path}[/dim]")
+    governance = load_init_governance(workspace)
+    audit_payload = {
+        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
+        "model": model,
+        "targets": list(targets or []),
+        "final_status": run_result.trace.final_status,
+        "final_reason": run_result.trace.final_reason,
+        "accepted_attempt": run_result.trace.accepted_attempt,
+        "used_fallback": run_result.adjudicated.used_fallback,
+        "governance": {
+            "allowed_stages": list(governance.allowed_stages),
+            "relationship_boundary_min": governance.relationship_boundary_min,
+            "boundary_expression_min": governance.boundary_expression_min,
+        },
+        "result": {
+            "soul_markdown": run_result.adjudicated.soul_markdown,
+            "heart_markdown": run_result.adjudicated.heart_markdown,
+            "profile": run_result.adjudicated.profile,
+        },
+    }
+    audit_path = writer.write_init_audit(stamp, audit_payload)
+    console.print(f"[dim]  audit saved: {audit_path}[/dim]")
 
 
 def _report_soul_init_run(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
     adjudicated = run_result.adjudicated
     _print_soul_init_trace(run_result.trace)
-    _write_soul_init_trace(workspace, run_result.trace, model=model, targets=targets)
+    _write_soul_init_artifacts(workspace, run_result, model=model, targets=targets)
     if not adjudicated.used_fallback:
         console.print(
             "[green]✓[/green] "
@@ -1612,6 +1639,7 @@ def soul_init(
         )
 
         soul_markdown_override: str | None = None
+        heart_markdown_override: str | None = None
         profile_override: dict | None = None
         if use_llm and provider and payload is not None:
             try:
@@ -1622,10 +1650,12 @@ def soul_init(
                         payload,
                         provider=provider,
                         model=effective_cfg.agents.defaults.model,
+                        workspace=ws,
                     )
                 )
                 adjudicated = run_result.adjudicated
                 soul_markdown_override = adjudicated.soul_markdown
+                heart_markdown_override = adjudicated.heart_markdown
                 profile_override = adjudicated.profile
                 _report_soul_init_run(
                     ws,
@@ -1642,6 +1672,7 @@ def soul_init(
             payload=payload,
             force=force,
             soul_markdown_override=soul_markdown_override,
+            heart_markdown_override=heart_markdown_override,
             profile_override=profile_override,
         )
 
@@ -1667,6 +1698,7 @@ def soul_init(
     personality_values: dict[str, float] | None = None
     personality_markdown: str | None = None
     soul_markdown_override: str | None = None
+    heart_markdown_override: str | None = None
     profile_override: dict | None = None
 
     # Optional LLM-backed soul initialization
@@ -1690,10 +1722,12 @@ def soul_init(
                     payload,
                     provider=provider,
                     model=effective_cfg.agents.defaults.model,
+                    workspace=ws,
                 )
             )
             adjudicated = run_result.adjudicated
             soul_markdown_override = adjudicated.soul_markdown
+            heart_markdown_override = adjudicated.heart_markdown
             profile_override = adjudicated.profile
             personality_values = adjudicated.profile.get("personality", {})
             _report_soul_init_run(
@@ -1719,6 +1753,7 @@ def soul_init(
         personality_values=personality_values,
         personality_markdown=personality_markdown,
         soul_markdown_override=soul_markdown_override,
+        heart_markdown_override=heart_markdown_override,
         profile_override=profile_override,
     )
     console.print("[green]✓[/green] IDENTITY.md created")
@@ -1728,6 +1763,7 @@ def soul_init(
     console.print("[green]✓[/green] USER.md created")
     console.print("[green]✓[/green] CORE_ANCHOR.md created")
     console.print("[green]✓[/green] SOUL_METHOD.md created")
+    console.print("[green]✓[/green] SOUL_GOVERNANCE.json created")
     console.print("[green]✓[/green] SOUL_PROFILE.md created")
 
     # Enable soul in config when a config file is available

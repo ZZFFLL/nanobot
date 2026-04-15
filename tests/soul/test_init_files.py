@@ -6,9 +6,9 @@ from nanobot.soul.init_files import normalize_only_files
 
 
 def test_normalize_only_files_orders_and_deduplicates():
-    result = normalize_only_files(["SOUL_PROFILE.md", "AGENTS.md", "SOUL_PROFILE.md"])
+    result = normalize_only_files(["SOUL_PROFILE.md", "AGENTS.md", "SOUL_GOVERNANCE.json", "SOUL_PROFILE.md"])
 
-    assert result == ["AGENTS.md", "SOUL_PROFILE.md"]
+    assert result == ["AGENTS.md", "SOUL_GOVERNANCE.json", "SOUL_PROFILE.md"]
 
 
 def test_normalize_only_files_rejects_unknown_file():

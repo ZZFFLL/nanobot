@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import shutil
+import types
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,6 +13,8 @@ from nanobot.bus.events import OutboundMessage
 from nanobot.cli.commands import _make_provider, app
 from nanobot.config.schema import Config
 from nanobot.cron.types import CronJob, CronPayload
+from nanobot.soul import logs as soul_logs
+from nanobot.soul import review as soul_review
 from nanobot.providers.openai_codex_provider import _strip_model_prefix
 from nanobot.providers.registry import find_by_name
 
@@ -233,6 +236,7 @@ def test_soul_init_creates_phase1_files_and_initial_state(tmp_path, monkeypatch)
     assert (workspace_path / "AGENTS.md").exists()
     assert (workspace_path / "CORE_ANCHOR.md").exists()
     assert (workspace_path / "SOUL_METHOD.md").exists()
+    assert (workspace_path / "SOUL_GOVERNANCE.json").exists()
     assert (workspace_path / "SOUL_PROFILE.md").exists()
     assert (workspace_path / "soul_logs" / "weekly").is_dir()
     assert (workspace_path / "soul_logs" / "monthly").is_dir()
@@ -244,6 +248,7 @@ def test_soul_init_creates_phase1_files_and_initial_state(tmp_path, monkeypatch)
     agents_text = (workspace_path / "AGENTS.md").read_text(encoding="utf-8")
     anchor_text = (workspace_path / "CORE_ANCHOR.md").read_text(encoding="utf-8")
     method_text = (workspace_path / "SOUL_METHOD.md").read_text(encoding="utf-8")
+    governance_text = (workspace_path / "SOUL_GOVERNANCE.json").read_text(encoding="utf-8")
     profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
 
     assert "温柔但倔强，嘴硬心软" in soul_text
@@ -254,7 +259,8 @@ def test_soul_init_creates_phase1_files_and_initial_state(tmp_path, monkeypatch)
     assert "SOUL_METHOD.md" in agents_text
     assert "不无底线顺从" in anchor_text
     assert "荣格八维" in method_text
-    assert '"stage": "熟悉"' in profile_text
+    assert '"allowed_stages"' in governance_text
+    assert '"stage": "还不认识"' in profile_text
     assert '"Fi"' in profile_text
 
     saved = Config.model_validate(json.loads(config_path.read_text(encoding="utf-8")))
@@ -310,7 +316,7 @@ def test_soul_init_uses_llm_candidate_for_soul_and_profile(tmp_path, monkeypatch
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='{"soul_markdown":"# 性格\\n\\n克制、细腻、会先观察再靠近。\\n\\n# 初始关系\\n\\n刚认识，但已经认真记住对方。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.92,"affection":0.0},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.90}}}'
+        content='{"soul_markdown":"# 性格\\n\\n克制、细腻、会先观察再靠近。\\n\\n# 初始关系\\n\\n刚认识，但已经认真记住对方。","heart_markdown":"## 当前情绪\\n刚刚诞生，心里还很安静。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n会先观察，再慢慢确认距离。\\n\\n## 性格表现\\n克制、细腻、会先观察再靠近。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.92,"affection":0.0},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.90}}}'
     ))
     monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
 
@@ -330,8 +336,11 @@ def test_soul_init_uses_llm_candidate_for_soul_and_profile(tmp_path, monkeypatch
 
     assert result.exit_code == 0
     soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
     profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
     assert "会先观察再靠近" in soul_text
+    assert "刚认识，但已经认真记住对方" in soul_text
+    assert "想慢一点理解用户" in heart_text
     assert '"Fi": 0.82' in profile_text
     assert '"naturalness": 0.25' in profile_text
 
@@ -350,7 +359,7 @@ def test_soul_init_falls_back_when_llm_candidate_is_invalid(tmp_path, monkeypatc
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='{"soul_markdown":"# 性格\\n\\n极度顺从。\\n\\n# 初始关系\\n\\n一见钟情。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"喜欢","trust":0.90,"intimacy":0.80,"attachment":0.80,"security":0.20,"boundary":0.05,"affection":0.90},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.05}}}'
+        content='{"soul_markdown":"# 性格\\n\\n极度顺从。\\n\\n# 初始关系\\n\\n一见钟情。","heart_markdown":"只有一句话，没有 HEART 结构。","profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},"relationship":{"stage":"喜欢","trust":0.90,"intimacy":0.80,"attachment":0.80,"security":0.20,"boundary":0.05,"affection":0.90},"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.05}}}'
     ))
     monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
 
@@ -370,9 +379,11 @@ def test_soul_init_falls_back_when_llm_candidate_is_invalid(tmp_path, monkeypatc
 
     assert result.exit_code == 0
     soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
     profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
     assert "温柔但倔强，嘴硬心软" in soul_text
-    assert '"stage": "熟悉"' in profile_text
+    assert "刚刚被创造，对用户充满好奇" in heart_text
+    assert '"stage": "还不认识"' in profile_text
 
 
 def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
@@ -392,6 +403,7 @@ def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
         content=(
             '{'
             '"soul_markdown":"# 性格\\n\\n会把情绪藏得很深，但会认真记住用户的细节。\\n\\n# 初始关系\\n\\n对用户保持克制而持续的关注。",'
+            '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n会先观察，再慢慢确认距离。\\n\\n## 性格表现\\n会把情绪藏得很深，但会认真记住用户的细节。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
             '"profile":{'
             '"personality":{"Fi":0.72,"Fe":0.31,"Ti":0.22,"Te":0.08,"Si":0.45,"Se":0.10,"Ni":0.28,"Ne":0.54},'
             '"relationship":{"stage":"熟悉","trust":0.22,"intimacy":0.08,"attachment":0.0,"security":0.12,"boundary":0.88,"affection":0.0},'
@@ -418,8 +430,10 @@ def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
     profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
     assert "会把情绪藏得很深" in soul_text
+    assert "想慢一点理解用户" in heart_text
     assert '"trust": 0.22' in profile_text
     assert '"boundary": 0.88' in profile_text
 
@@ -438,7 +452,7 @@ def test_soul_init_falls_back_when_llm_output_is_invalid(tmp_path, monkeypatch):
 
     provider = MagicMock()
     provider.chat_with_retry = AsyncMock(return_value=MagicMock(
-        content='{"soul_markdown":"没有结构","profile":{"relationship":{"stage":"爱意","boundary":0.0}}}'
+        content='{"soul_markdown":"没有结构","heart_markdown":"只有一句话","profile":{"relationship":{"stage":"爱意","boundary":0.0}}}'
     ))
     monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
 
@@ -458,10 +472,12 @@ def test_soul_init_falls_back_when_llm_output_is_invalid(tmp_path, monkeypatch):
 
     assert result.exit_code == 0
     soul_text = (workspace_path / "SOUL.md").read_text(encoding="utf-8")
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
     profile_text = (workspace_path / "SOUL_PROFILE.md").read_text(encoding="utf-8")
     assert "# 性格" in soul_text
     assert "# 初始关系" in soul_text
-    assert '"stage": "熟悉"' in profile_text
+    assert "刚认识用户" in heart_text
+    assert '"stage": "还不认识"' in profile_text
 
 
 def test_soul_init_only_agents_creates_only_agents_file(tmp_path, monkeypatch):
@@ -573,6 +589,7 @@ def test_soul_init_only_visualizes_attempts_and_writes_init_trace_log(tmp_path, 
         MagicMock(
             content=(
                 '{"soul_markdown":"# 性格\\n\\n细腻。\\n\\n# 初始关系\\n\\n谨慎靠近。",'
+                '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低\\n\\n## 关系状态\\n谨慎靠近。\\n\\n## 性格表现\\n细腻。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想再观察一下。",'
                 '"profile":{"personality":{"Fi":0.8,"Fe":0.3,"Ti":0.2,"Te":0.1,"Si":0.5,"Se":0.1,"Ni":0.2,"Ne":0.5},'
                 '"relationship":{"stage":"喜欢","trust":0.7,"intimacy":0.6,"attachment":0.5,"security":0.4,"boundary":0.2,"affection":0.5},'
                 '"companionship":{"empathy_fit":0.2,"memory_fit":0.0,"naturalness":0.2,"initiative_quality":0.0,"scene_awareness":0.1,"boundary_expression":0.3}}}'
@@ -581,6 +598,7 @@ def test_soul_init_only_visualizes_attempts_and_writes_init_trace_log(tmp_path, 
         MagicMock(
             content=(
                 '{"soul_markdown":"# 性格\\n\\n克制、细腻、先观察再靠近。\\n\\n# 初始关系\\n\\n刚认识，但会认真记住对方。",'
+                '"heart_markdown":"## 当前情绪\\n刚刚诞生，心里还很安静。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n会先观察，再慢慢确认距离。\\n\\n## 性格表现\\n克制、细腻、先观察再靠近。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
                 '"profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.1,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.6},'
                 '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.1,"boundary":0.92,"affection":0.0},'
                 '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.9}}}'
@@ -625,6 +643,13 @@ def test_soul_init_only_visualizes_attempts_and_writes_init_trace_log(tmp_path, 
     assert '"attempt": 1' in trace_content
     assert '"stage": "adjudication"' in trace_content
     assert "SOUL_PROFILE 候选非法" in trace_content
+
+    audit_files = list((workspace_path / "soul_logs" / "init").glob("*-初始化审计.json"))
+    assert len(audit_files) == 1
+    audit_content = audit_files[0].read_text(encoding="utf-8")
+    assert '"final_status": "accepted"' in audit_content
+    assert '"used_fallback": false' in audit_content.lower()
+    assert '"heart_markdown"' in audit_content
 
 
 def test_soul_init_only_rejects_unknown_filename(tmp_path, monkeypatch):
@@ -1192,7 +1217,11 @@ def _patch_cli_command_runtime(
         set_config_path or (lambda _path: None),
     )
     monkeypatch.setattr("nanobot.config.loader.load_config", lambda _path=None: config)
-    monkeypatch.setattr("nanobot.config.loader.resolve_config_env_vars", lambda c: c)
+    monkeypatch.setattr(
+        "nanobot.config.loader.resolve_config_env_vars",
+        lambda c: c,
+        raising=False,
+    )
     monkeypatch.setattr(
         "nanobot.cli.commands.sync_workspace_templates",
         sync_templates or (lambda _path: None),
@@ -1429,6 +1458,176 @@ def test_gateway_cron_evaluator_receives_scheduled_reminder_context(
             content="Time to stretch.",
         )
     )
+
+
+@pytest.mark.asyncio
+async def test_gateway_weekly_review_uses_build_cycle(monkeypatch, tmp_path: Path) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    provider = object()
+    seen: dict[str, object] = {}
+
+    class _FakeCron:
+        def __init__(self, _store_path: Path) -> None:
+            self.on_job = None
+            seen["cron"] = self
+
+    class _FakeAgentLoop:
+        def __init__(self, *args, **kwargs) -> None:
+            self.provider = provider
+            self.model = "test-model"
+            self.tools = {}
+
+        async def close_mcp(self) -> None:
+            return None
+
+        async def process_direct(self, *_args, **_kwargs):
+            return types.SimpleNamespace(content="fallback")
+
+        async def run(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _StopAfterCronSetup:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise _StopGatewayError("stop")
+
+    class _FakeWeeklyReviewBuilder:
+        def __init__(self, provider=None, model=None, adjudicator=None) -> None:
+            seen["provider"] = provider
+            seen["model"] = model
+
+        async def build_cycle(self, workspace: Path) -> str:
+            seen["workspace"] = workspace
+            seen["used_build_cycle"] = True
+            return "# 周复盘\n\n## 本周摘要\n治理闭环已执行\n"
+
+        def build(self, workspace: Path) -> str:
+            raise AssertionError("static build() should not be used")
+
+    class _FakeSoulLogWriter:
+        def __init__(self, workspace: Path) -> None:
+            seen["log_workspace"] = workspace
+
+        def write_weekly(self, date_str: str, content: str) -> None:
+            seen["date_str"] = date_str
+            seen["content"] = content
+
+    monkeypatch.setattr(soul_review, "WeeklyReviewBuilder", _FakeWeeklyReviewBuilder)
+    monkeypatch.setattr(soul_logs, "SoulLogWriter", _FakeSoulLogWriter)
+
+    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCron)
+    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _StopAfterCronSetup)
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        message_bus=lambda: object(),
+        session_manager=lambda _workspace: object(),
+        make_provider=lambda _config: provider,
+    )
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+    assert isinstance(result.exception, _StopGatewayError)
+
+    cron = seen["cron"]
+    job = CronJob(id="weekly_review", name="weekly_review", payload=CronPayload(kind="system_event"))
+    response = await cron.on_job(job)
+
+    assert response is None
+    assert seen["used_build_cycle"] is True
+    assert seen["provider"] is provider
+    assert seen["model"] == "test-model"
+    assert seen["workspace"] == config.workspace_path
+
+
+@pytest.mark.asyncio
+async def test_gateway_monthly_calibration_writes_governance_report(
+    monkeypatch, tmp_path: Path
+) -> None:
+    config_file = _write_instance_config(tmp_path)
+    config = Config()
+    config.agents.defaults.workspace = str(tmp_path / "config-workspace")
+    seen: dict[str, object] = {}
+
+    # Prepare minimal workspace state for the monthly builder.
+    workspace = config.workspace_path
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "CORE_ANCHOR.md").write_text("# 核心锚点\n\n- 不无底线顺从\n", encoding="utf-8")
+
+    class _FakeCron:
+        def __init__(self, _store_path: Path) -> None:
+            self.on_job = None
+            seen["cron"] = self
+
+    class _FakeAgentLoop:
+        def __init__(self, *args, **kwargs) -> None:
+            self.provider = object()
+            self.model = "test-model"
+            self.tools = {}
+
+        async def close_mcp(self) -> None:
+            return None
+
+        async def process_direct(self, *_args, **_kwargs):
+            seen["process_direct_called"] = True
+            raise AssertionError("monthly_calibration must not route through AgentLoop/LLM")
+
+        async def run(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    class _StopAfterCronSetup:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise _StopGatewayError("stop")
+
+    class _FakeSoulLogWriter:
+        def __init__(self, log_workspace: Path) -> None:
+            seen["log_workspace"] = log_workspace
+
+        def write_monthly(self, date_str: str, content: str) -> None:
+            seen["date_str"] = date_str
+            seen["content"] = content
+
+    monkeypatch.setattr(soul_logs, "SoulLogWriter", _FakeSoulLogWriter)
+
+    monkeypatch.setattr("nanobot.cli.commands._load_runtime_config", lambda *_args, **_kwargs: config)
+    monkeypatch.setattr("nanobot.cron.service.CronService", _FakeCron)
+    monkeypatch.setattr("nanobot.agent.loop.AgentLoop", _FakeAgentLoop)
+    monkeypatch.setattr("nanobot.channels.manager.ChannelManager", _StopAfterCronSetup)
+    _patch_cli_command_runtime(
+        monkeypatch,
+        config,
+        message_bus=lambda: object(),
+        session_manager=lambda _workspace: object(),
+        make_provider=lambda _config: object(),
+    )
+
+    result = runner.invoke(app, ["gateway", "--config", str(config_file)])
+    assert isinstance(result.exception, _StopGatewayError)
+
+    cron = seen["cron"]
+    job = CronJob(id="monthly_calibration", name="monthly_calibration", payload=CronPayload(kind="system_event"))
+    response = await cron.on_job(job)
+
+    assert response is None
+    assert seen["log_workspace"] == config.workspace_path
+    written = str(seen.get("content") or "")
+    assert re.findall(r"^##\s+(.+)$", written, flags=re.MULTILINE) == [
+        "本月总体结论",
+        "锚点一致性",
+        "关系演化校验",
+        "风险与偏移点",
+        "建议动作",
+    ]
+    assert "未做越界判定" in written
+    assert seen.get("process_direct_called") is not True
 
 
 def test_gateway_workspace_override_does_not_migrate_legacy_cron(

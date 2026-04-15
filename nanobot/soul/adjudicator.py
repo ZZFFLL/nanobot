@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from nanobot.soul.heart import validate_heart_markdown
 from nanobot.soul.methodology import RELATIONSHIP_STAGES
 
 
@@ -13,9 +14,8 @@ class SoulAdjudicator:
         current_heart: str,
         candidate_text: str,
     ) -> tuple[bool, str]:
-        if not candidate_text.strip():
-            return False, current_heart
-        if "## " not in candidate_text:
+        validation_error = validate_heart_markdown(candidate_text)
+        if validation_error:
             return False, current_heart
         return True, candidate_text
 

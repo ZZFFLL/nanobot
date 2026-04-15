@@ -71,6 +71,19 @@ class TestHeartManager:
         assert "## 当前渴望" in text
         assert "温柔且好奇" in text
 
+    def test_initialize_does_not_use_relationship_stage_as_hot_state(self, heart):
+        heart.initialize("小文", "温柔且好奇", initial_relationship="还不认识")
+        text = heart.read_text()
+        assert text is not None
+        assert "还不认识" not in text
+        assert "熟悉" not in text
+
+    def test_initialize_uses_relationship_description_when_available(self, heart):
+        heart.initialize("小文", "温柔且好奇", initial_relationship="刚刚被创造，对用户充满好奇")
+        text = heart.read_text()
+        assert text is not None
+        assert "刚刚被创造，对用户充满好奇" in text
+
     def test_read_identity_name(self, heart, workspace):
         identity_file = workspace / "IDENTITY.md"
         identity_file.write_text("name: 小文\ngender: 女\n", encoding="utf-8")

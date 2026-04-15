@@ -37,9 +37,29 @@ class SoulLogWriter:
             content += "\n"
         return self._write("init", f"{stamp}-初始化追踪.jsonl", content)
 
+    def write_init_audit(self, stamp: str, payload: dict) -> Path:
+        return self._write_json("init", f"{stamp}-初始化审计.json", payload)
+
+    def write_projection_trace(self, stamp: str, records: list[dict]) -> Path:
+        lines = [json.dumps(record, ensure_ascii=False) for record in records]
+        content = "\n".join(lines)
+        if content:
+            content += "\n"
+        return self._write("projection", f"{stamp}-投影追踪.jsonl", content)
+
+    def write_projection_audit(self, stamp: str, payload: dict) -> Path:
+        return self._write_json("projection", f"{stamp}-投影审计.json", payload)
+
     def _write(self, kind: str, filename: str, content: str) -> Path:
         target = self.base_dir / kind
         target.mkdir(parents=True, exist_ok=True)
         path = target / filename
         path.write_text(content, encoding="utf-8")
         return path
+
+    def _write_json(self, kind: str, filename: str, payload: dict) -> Path:
+        return self._write(
+            kind,
+            filename,
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        )

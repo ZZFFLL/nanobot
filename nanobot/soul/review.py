@@ -7,11 +7,14 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
+
 from nanobot.cron.types import CronJob, CronPayload, CronSchedule
 from nanobot.soul.adjudicator import SoulAdjudicator
 from nanobot.soul.heart import HeartManager
 from nanobot.soul.inference import RelationshipInference
 from nanobot.soul.profile import SoulProfileManager
+from nanobot.soul.projection import SoulProjectionError, project_soul_from_profile
 from nanobot.soul.proactive import _extract_section
 
 if TYPE_CHECKING:
@@ -49,7 +52,7 @@ class WeeklyReviewBuilder:
         profile = SoulProfileManager(workspace).read()
         summary = "本周自动复盘已生成，等待后续更丰富的趋势材料接入。"
         emotion = _extract_section(heart_text, "当前情绪") if heart_text else ""
-        stage = profile.get("relationship", {}).get("stage", "熟悉")
+        stage = profile.get("relationship", {}).get("stage", "还不认识")
         proactive_excerpt = self._recent_log_excerpt(workspace, "proactive")
         return self.render({
             "summary": summary,
@@ -62,7 +65,7 @@ class WeeklyReviewBuilder:
         heart_text = HeartManager(workspace).read_text() or ""
         profile_mgr = SoulProfileManager(workspace)
         profile = profile_mgr.read()
-        current_stage = profile.get("relationship", {}).get("stage", "熟悉")
+        current_stage = profile.get("relationship", {}).get("stage", "还不认识")
         proactive_excerpt = self._recent_log_excerpt(workspace, "proactive")
         summary = "本周自动复盘已生成，等待后续更丰富的趋势材料接入。"
         if self.provider and self.model:
@@ -80,13 +83,25 @@ class WeeklyReviewBuilder:
                     confidence=candidate.confidence,
                 )
                 if allowed:
-                    profile_mgr.update_relationship(
+                    candidate_profile = profile_mgr.relationship_candidate(
+                        profile,
                         stage=candidate.proposed_stage,
                         dimension_deltas=candidate.dimension_changes,
                     )
-                    profile = profile_mgr.read()
-                    current_stage = profile.get("relationship", {}).get("stage", current_stage)
-                    summary = candidate.evidence_summary or summary
+                    try:
+                        await project_soul_from_profile(
+                            workspace,
+                            provider=self.provider,
+                            model=self.model,
+                            profile_override=candidate_profile,
+                            trigger="weekly_review",
+                        )
+                        # Commit profile only after projection succeeds.
+                        profile_mgr.write(candidate_profile)
+                        current_stage = candidate_profile.get("relationship", {}).get("stage", current_stage)
+                        summary = candidate.evidence_summary or summary
+                    except SoulProjectionError as exc:
+                        logger.warning("WeeklyReviewBuilder: SOUL projection skipped: {}", exc)
         emotion = _extract_section(heart_text, "当前情绪") if heart_text else ""
         return self.render({
             "summary": summary,
