@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from nanobot.agent.loop import AgentLoop
+from nanobot.agent.loop import AgentLoop, _ProcessMessageOutcome
 from nanobot.bus.events import InboundMessage
 from nanobot.bus.queue import MessageBus
 from nanobot.command.builtin import cmd_new, register_builtin_commands
@@ -78,9 +78,9 @@ class TestUnifiedSessionDispatch:
 
         async def fake_process(msg, **kwargs):
             captured.append(msg.session_key)
-            return None
+            return _ProcessMessageOutcome(response=None)
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop._process_message_with_post_send = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="111")
         await loop._dispatch(msg)
@@ -96,9 +96,9 @@ class TestUnifiedSessionDispatch:
 
         async def fake_process(msg, **kwargs):
             captured.append(msg.session_key)
-            return None
+            return _ProcessMessageOutcome(response=None)
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop._process_message_with_post_send = fake_process  # type: ignore[method-assign]
 
         await loop._dispatch(_make_msg(channel="telegram", chat_id="111"))
         await loop._dispatch(_make_msg(channel="discord", chat_id="222"))
@@ -115,9 +115,9 @@ class TestUnifiedSessionDispatch:
 
         async def fake_process(msg, **kwargs):
             captured.append(msg.session_key)
-            return None
+            return _ProcessMessageOutcome(response=None)
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop._process_message_with_post_send = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="999")
         await loop._dispatch(msg)
@@ -133,9 +133,9 @@ class TestUnifiedSessionDispatch:
 
         async def fake_process(msg, **kwargs):
             captured.append(msg.session_key)
-            return None
+            return _ProcessMessageOutcome(response=None)
 
-        loop._process_message = fake_process  # type: ignore[method-assign]
+        loop._process_message_with_post_send = fake_process  # type: ignore[method-assign]
 
         msg = _make_msg(channel="telegram", chat_id="111", session_key_override="telegram:thread:42")
         await loop._dispatch(msg)

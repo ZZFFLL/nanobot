@@ -46,3 +46,53 @@ async def test_dispatch_publishes_before_post_send_finalizer():
     await loop._dispatch(msg)
 
     assert events == ["publish:hi", "finalizer"]
+
+
+@pytest.mark.asyncio
+async def test_process_message_direct_caller_awaits_post_send_finalizer():
+    from nanobot.agent.loop import _ProcessMessageOutcome
+    from nanobot.bus.events import InboundMessage, OutboundMessage
+
+    loop = _make_loop()
+    events: list[str] = []
+    msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
+
+    async def post_send_finalizer() -> None:
+        events.append("finalizer")
+
+    loop._process_message_with_post_send = AsyncMock(return_value=_ProcessMessageOutcome(
+        response=OutboundMessage(channel="test", chat_id="c1", content="hi"),
+        post_send_finalizer=post_send_finalizer,
+    ))
+
+    response = await loop._process_message(msg)
+
+    assert response is not None
+    assert response.content == "hi"
+    assert events == ["finalizer"]
+
+
+@pytest.mark.asyncio
+async def test_dispatch_does_not_send_second_error_when_post_send_finalizer_fails():
+    from nanobot.agent.loop import _ProcessMessageOutcome
+    from nanobot.bus.events import InboundMessage, OutboundMessage
+
+    loop = _make_loop()
+    events: list[str] = []
+    msg = InboundMessage(channel="test", sender_id="u1", chat_id="c1", content="hello")
+
+    async def post_send_finalizer() -> None:
+        raise RuntimeError("post-send failed")
+
+    async def fake_publish(outbound: OutboundMessage) -> None:
+        events.append(outbound.content)
+
+    loop.bus.publish_outbound = AsyncMock(side_effect=fake_publish)
+    loop._process_message_with_post_send = AsyncMock(return_value=_ProcessMessageOutcome(
+        response=OutboundMessage(channel="test", chat_id="c1", content="hi"),
+        post_send_finalizer=post_send_finalizer,
+    ))
+
+    await loop._dispatch(msg)
+
+    assert events == ["hi"]

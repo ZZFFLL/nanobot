@@ -422,6 +422,7 @@ class AgentLoop:
         lock = self._session_locks.setdefault(msg.session_key, asyncio.Lock())
         gate = self._concurrency_gate or nullcontext()
         async with lock, gate:
+            main_response_published = False
             try:
                 on_stream = on_stream_end = None
                 if msg.metadata.get("_wants_stream"):
@@ -461,13 +462,23 @@ class AgentLoop:
                 response = outcome.response
                 if response is not None:
                     await self.bus.publish_outbound(response)
+                    main_response_published = True
                 elif msg.channel == "cli":
                     await self.bus.publish_outbound(OutboundMessage(
                         channel=msg.channel, chat_id=msg.chat_id,
                         content="", metadata=msg.metadata or {},
                     ))
                 if outcome.post_send_finalizer is not None:
-                    await outcome.post_send_finalizer()
+                    try:
+                        await outcome.post_send_finalizer()
+                    except Exception:
+                        if main_response_published:
+                            logger.exception(
+                                "Post-send finalizer failed after response publish for session {}",
+                                msg.session_key,
+                            )
+                        else:
+                            raise
             except asyncio.CancelledError:
                 logger.info("Task cancelled for session {}", msg.session_key)
                 raise
