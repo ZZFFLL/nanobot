@@ -1644,7 +1644,6 @@ def soul_init(
             prompt_fn=lambda label, default: typer.prompt(label, default=default),
         )
 
-        soul_markdown_override: str | None = None
         heart_markdown_override: str | None = None
         profile_override: dict | None = None
         if use_llm and provider and payload is not None:
@@ -1660,7 +1659,6 @@ def soul_init(
                     )
                 )
                 adjudicated = run_result.adjudicated
-                soul_markdown_override = adjudicated.soul_markdown
                 heart_markdown_override = adjudicated.heart_markdown
                 profile_override = adjudicated.profile
                 _report_soul_init_run(
@@ -1672,15 +1670,18 @@ def soul_init(
             except Exception:
                 console.print("[dim]  (LLM soul init skipped — fallback initialization used)[/dim]")
 
-        actions = write_selected_files(
-            ws,
-            targets=targets,
-            payload=payload,
-            force=force,
-            soul_markdown_override=soul_markdown_override,
-            heart_markdown_override=heart_markdown_override,
-            profile_override=profile_override,
-        )
+        try:
+            actions = write_selected_files(
+                ws,
+                targets=targets,
+                payload=payload,
+                force=force,
+                heart_markdown_override=heart_markdown_override,
+                profile_override=profile_override,
+            )
+        except ValueError as exc:
+            console.print(f"[red]{exc}[/red]")
+            raise typer.Exit(2) from exc
 
         if resolved_config_path.exists():
             cfg = load_config(resolved_config_path)
@@ -1703,7 +1704,6 @@ def soul_init(
 
     personality_values: dict[str, float] | None = None
     personality_markdown: str | None = None
-    soul_markdown_override: str | None = None
     heart_markdown_override: str | None = None
     profile_override: dict | None = None
 
@@ -1732,7 +1732,6 @@ def soul_init(
                 )
             )
             adjudicated = run_result.adjudicated
-            soul_markdown_override = adjudicated.soul_markdown
             heart_markdown_override = adjudicated.heart_markdown
             profile_override = adjudicated.profile
             personality_values = adjudicated.profile.get("personality", {})
@@ -1758,7 +1757,6 @@ def soul_init(
         ),
         personality_values=personality_values,
         personality_markdown=personality_markdown,
-        soul_markdown_override=soul_markdown_override,
         heart_markdown_override=heart_markdown_override,
         profile_override=profile_override,
     )

@@ -306,6 +306,12 @@ def _extract_section(text: str, heading: str) -> str:
 
 
 def _project_personality_text(profile: dict) -> str:
+    expression = profile.get("expression") if isinstance(profile, dict) else {}
+    if isinstance(expression, dict):
+        personality_seed = str(expression.get("personality_seed") or "").strip()
+        if personality_seed:
+            return personality_seed
+
     personality = profile.get("personality") if isinstance(profile, dict) else {}
     if not isinstance(personality, dict):
         personality = {}
@@ -332,6 +338,12 @@ def _project_personality_text(profile: dict) -> str:
 
 
 def _project_relationship_text(profile: dict) -> str:
+    expression = profile.get("expression") if isinstance(profile, dict) else {}
+    if isinstance(expression, dict):
+        relationship_seed = str(expression.get("relationship_seed") or "").strip()
+        if relationship_seed:
+            return relationship_seed
+
     relationship = profile.get("relationship") if isinstance(profile, dict) else {}
     if not isinstance(relationship, dict):
         relationship = {}

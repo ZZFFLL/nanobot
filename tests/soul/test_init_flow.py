@@ -88,7 +88,6 @@ def test_bootstrap_workspace_writes_profile_before_projected_soul(tmp_path, monk
             user_birthday="1990-01-01",
         ),
         profile_override=_profile(),
-        soul_markdown_override="# 性格\n\n候选性格。\n\n# 初始关系\n\n候选关系。\n",
     )
 
     assert seen == ["profile", "project"]
@@ -114,10 +113,35 @@ def test_bootstrap_workspace_persists_soul_only_from_profile(tmp_path):
             user_birthday="1990-01-01",
         ),
         profile_override=profile,
-        soul_markdown_override="# 性格\n\n候选性格。\n\n# 初始关系\n\n候选关系。\n",
     )
 
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(profile)
+
+
+def test_bootstrap_workspace_preserves_payload_intent_via_persisted_profile(tmp_path):
+    from nanobot.soul.bootstrap import SoulInitPayload, bootstrap_workspace
+    from nanobot.soul.projection import project_initial_soul_markdown
+
+    payload = SoulInitPayload(
+        ai_name="温予安",
+        gender="女",
+        birthday="2026-04-01",
+        personality="温柔但倔强，嘴硬心软",
+        relationship="刚刚被创造，对用户充满好奇",
+        user_name="阿峰",
+        user_birthday="1990-01-01",
+    )
+
+    bootstrap_workspace(tmp_path, payload)
+
+    profile = SoulProfileManager(tmp_path).read()
+    soul_text = (tmp_path / "SOUL.md").read_text(encoding="utf-8")
+
+    assert profile["expression"]["personality_seed"] == payload.personality
+    assert profile["expression"]["relationship_seed"] == payload.relationship
+    assert soul_text == project_initial_soul_markdown(profile)
+    assert payload.personality in soul_text
+    assert payload.relationship in soul_text
 
 
 def test_soul_init_only_soul_force_fails_without_profile(tmp_path, monkeypatch):
@@ -159,11 +183,41 @@ def test_write_selected_files_persists_soul_only_from_profile(tmp_path):
             user_birthday="1990-01-01",
         ),
         force=True,
-        soul_markdown_override="# 性格\n\n候选性格。\n\n# 初始关系\n\n候选关系。\n",
         profile_override=profile,
     )
 
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(profile)
+
+
+def test_write_selected_files_rebuilds_soul_from_persisted_profile_when_profile_not_targeted(tmp_path):
+    from nanobot.soul.bootstrap import SoulInitPayload
+    from nanobot.soul.init_files import write_selected_files
+    from nanobot.soul.projection import project_initial_soul_markdown
+
+    persisted_profile = _profile(stage="还不认识")
+    transient_profile = _profile(stage="熟悉")
+    SoulProfileManager(tmp_path).write(persisted_profile)
+
+    write_selected_files(
+        tmp_path,
+        targets=["SOUL.md", "HEART.md"],
+        payload=SoulInitPayload(
+            ai_name="温予安",
+            gender="女",
+            birthday="2026-04-01",
+            personality="payload 性格文本",
+            relationship="payload 关系文本",
+            user_name="阿峰",
+            user_birthday="1990-01-01",
+        ),
+        force=True,
+        heart_markdown_override="## 当前情绪\n安静。\n\n## 情绪强度\n低\n\n## 关系状态\n稳定。\n\n## 性格表现\n克制。\n\n## 情感脉络\n（暂无）\n\n## 情绪趋势\n平稳\n\n## 当前渴望\n继续观察。\n",
+        profile_override=transient_profile,
+    )
+
+    assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(
+        persisted_profile
+    )
 
 
 def test_soul_init_only_soul_force_rebuilds_from_existing_profile(tmp_path, monkeypatch):
@@ -187,3 +241,20 @@ def test_soul_init_only_soul_force_rebuilds_from_existing_profile(tmp_path, monk
 
     assert result.exit_code == 0
     assert (workspace / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(profile)
+
+
+def test_soul_init_only_soul_force_fails_clearly_for_malformed_profile(tmp_path, monkeypatch):
+    config_path, workspace = _write_config(tmp_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    (workspace / "SOUL_PROFILE.md").write_text("{broken json", encoding="utf-8")
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "SOUL.md", "--force"],
+    )
+
+    assert result.exit_code == 2
+    assert "SOUL_PROFILE.md" in result.stdout
+    assert "格式非法" in result.stdout

@@ -51,7 +51,6 @@ def bootstrap_workspace(
     *,
     personality_values: dict[str, float] | None = None,
     personality_markdown: str | None = None,
-    soul_markdown_override: str | None = None,
     heart_markdown_override: str | None = None,
     profile_override: dict | None = None,
 ) -> None:
@@ -96,7 +95,11 @@ def bootstrap_workspace(
         user_birthday=payload.user_birthday or None,
     )
 
-    profile = deepcopy(profile_override) if profile_override is not None else build_initial_profile(personality_values)
+    profile = deepcopy(profile_override) if profile_override is not None else build_initial_profile(
+        personality_values,
+        personality_seed=payload.personality,
+        relationship_seed=payload.relationship,
+    )
     SoulProfileManager(workspace).write(profile)
     soul_markdown = project_initial_soul_markdown(profile)
     (workspace / "SOUL.md").write_text(
@@ -108,7 +111,12 @@ def bootstrap_workspace(
         (workspace / "soul_logs" / kind).mkdir(parents=True, exist_ok=True)
 
 
-def build_initial_profile(personality_values: dict[str, float] | None = None) -> dict:
+def build_initial_profile(
+    personality_values: dict[str, float] | None = None,
+    *,
+    personality_seed: str = "",
+    relationship_seed: str = "",
+) -> dict:
     """Build the initial structured slow-state profile."""
 
     profile = build_default_profile()
@@ -116,6 +124,10 @@ def build_initial_profile(personality_values: dict[str, float] | None = None) ->
     relationship = profile["relationship"]
     for name in RELATIONSHIP_DIMENSIONS:
         relationship.setdefault(name, 0.0 if name != "boundary" else 1.0)
+    profile["expression"] = {
+        "personality_seed": personality_seed.strip(),
+        "relationship_seed": relationship_seed.strip(),
+    }
     return profile
 
 
@@ -200,7 +212,10 @@ async def infer_adjudicated_soul_init(
 ) -> SoulInitRunResult:
     """Build and adjudicate an LLM-backed initialization candidate."""
 
-    default_profile = build_initial_profile()
+    default_profile = build_initial_profile(
+        personality_seed=payload.personality,
+        relationship_seed=payload.relationship,
+    )
     default_soul_markdown = build_soul_markdown(payload)
     default_heart_markdown = render_initial_heart_markdown(
         payload.personality,

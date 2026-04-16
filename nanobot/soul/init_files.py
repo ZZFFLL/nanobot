@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
 from pathlib import Path
 from typing import Callable
@@ -185,7 +186,6 @@ def write_selected_files(
     targets: list[str],
     payload: SoulInitPayload | None,
     force: bool,
-    soul_markdown_override: str | None = None,
     heart_markdown_override: str | None = None,
     profile_override: dict | None = None,
 ) -> list[FileInitAction]:
@@ -193,8 +193,10 @@ def write_selected_files(
 
     actions: list[FileInitAction] = []
     workspace.mkdir(parents=True, exist_ok=True)
+    resolved_targets = normalize_only_files(targets)
+    written_profile: dict | None = None
 
-    for filename in normalize_only_files(targets):
+    for filename in resolved_targets:
         target = workspace / filename
         existed = target.exists()
         if existed and not force:
@@ -208,8 +210,12 @@ def write_selected_files(
         elif filename == "SOUL_GOVERNANCE.json":
             target.write_text(load_workspace_template("SOUL_GOVERNANCE.json"), encoding="utf-8")
         elif filename == "SOUL_PROFILE.md":
-            profile = profile_override if profile_override is not None else build_initial_profile()
+            profile = profile_override if profile_override is not None else build_initial_profile(
+                personality_seed=payload.personality if payload is not None else "",
+                relationship_seed=payload.relationship if payload is not None else "",
+            )
             SoulProfileManager(workspace).write(profile)
+            written_profile = profile
         else:
             if filename == "IDENTITY.md":
                 if payload is None:
@@ -225,7 +231,7 @@ def write_selected_files(
                 target.write_text(build_core_anchor_markdown(payload), encoding="utf-8")
             elif filename == "SOUL.md":
                 target.write_text(
-                    project_initial_soul_markdown(_resolve_profile_source(workspace, profile_override)),
+                    project_initial_soul_markdown(_resolve_profile_source(workspace, written_profile)),
                     encoding="utf-8",
                 )
             elif filename == "HEART.md":
@@ -264,7 +270,10 @@ def _resolve_profile_source(workspace: Path, profile_override: dict | None) -> d
     profile_file = workspace / "SOUL_PROFILE.md"
     if not profile_file.exists():
         raise ValueError("SOUL.md 初始化依赖 SOUL_PROFILE.md；请先初始化 SOUL_PROFILE.md")
-    return SoulProfileManager(workspace).read()
+    try:
+        return SoulProfileManager(workspace).read()
+    except json.JSONDecodeError as exc:
+        raise ValueError("SOUL_PROFILE.md 格式非法，无法重建 SOUL.md") from exc
 
 
 def _read_keyed_line(text: str, key: str) -> str:
