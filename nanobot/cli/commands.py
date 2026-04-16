@@ -1684,6 +1684,21 @@ def soul_init(
     )
     from nanobot.soul.methodology import load_init_governance
 
+    full_init_targets = normalize_only_files(
+        [
+            "IDENTITY.md",
+            "USER.md",
+            "AGENTS.md",
+            "CORE_ANCHOR.md",
+            "SOUL_METHOD.md",
+            "SOUL_GOVERNANCE.json",
+            "SOUL_PROFILE.md",
+            "SOUL.md",
+            "HEART.md",
+            "EVENTS.md",
+        ]
+    )
+
     # Determine workspace
     resolved_config_path = Path(config).expanduser().resolve() if config else get_config_path()
     cfg = None
@@ -1821,6 +1836,13 @@ def soul_init(
     heart_markdown_override: str | None = None
     profile_override: dict | None = None
     run_result = None
+    governance = load_init_governance(ws)
+    effective_governance = resolve_effective_init_governance(
+        ws,
+        targets=full_init_targets,
+        force=True,
+        governance=governance,
+    )
 
     # Optional LLM-backed soul initialization
     try:
@@ -1844,6 +1866,7 @@ def soul_init(
                     provider=provider,
                     model=effective_cfg.agents.defaults.model,
                     workspace=ws,
+                    governance=effective_governance,
                 )
             )
             adjudicated = run_result.adjudicated
@@ -1874,7 +1897,7 @@ def soul_init(
             ws,
             run_result,
             model=effective_cfg.agents.defaults.model,
-            targets=["SOUL.md", "SOUL_PROFILE.md"],
+            targets=full_init_targets,
         )
         _print_soul_init_summary(run_result)
     console.print("[green]✓[/green] IDENTITY.md created")

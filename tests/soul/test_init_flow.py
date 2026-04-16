@@ -5,6 +5,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
+import pytest
 from typer.testing import CliRunner
 
 from nanobot.cli.commands import app
@@ -79,7 +80,7 @@ def _write_governance(workspace, **init_overrides):
     )
 
 
-def test_bootstrap_workspace_writes_profile_before_projected_soul(tmp_path, monkeypatch):
+def test_bootstrap_workspace_projects_profile_before_persisting_it(tmp_path, monkeypatch):
     from nanobot.soul.bootstrap import SoulInitPayload, bootstrap_workspace
 
     seen: list[str] = []
@@ -91,7 +92,7 @@ def test_bootstrap_workspace_writes_profile_before_projected_soul(tmp_path, monk
 
     def _project_from_profile(profile, **_kwargs):
         seen.append("project")
-        assert (tmp_path / "SOUL_PROFILE.md").exists()
+        assert not (tmp_path / "SOUL_PROFILE.md").exists()
         assert profile["relationship"]["stage"] == "熟悉"
         assert _kwargs == {"use_expression_seed": True}
         return "# 性格\n\n投影后的性格。\n\n# 初始关系\n\n投影后的关系。\n"
@@ -113,10 +114,36 @@ def test_bootstrap_workspace_writes_profile_before_projected_soul(tmp_path, monk
         profile_override=_profile(),
     )
 
-    assert seen == ["profile", "project"]
+    assert seen == ["project", "profile"]
     assert (tmp_path / "SOUL.md").read_text(encoding="utf-8") == (
         "# 性格\n\n投影后的性格。\n\n# 初始关系\n\n投影后的关系。\n"
     )
+
+
+def test_bootstrap_workspace_rejects_invalid_profile_before_persisting_it(tmp_path):
+    from nanobot.soul.bootstrap import SoulInitPayload, bootstrap_workspace
+
+    invalid_profile = _profile(stage="熟悉")
+    invalid_profile["relationship"]["trust"] = "bad"
+
+    with pytest.raises(ValueError) as exc_info:
+        bootstrap_workspace(
+            tmp_path,
+            SoulInitPayload(
+                ai_name="温予安",
+                gender="女",
+                birthday="2026-04-01",
+                personality="温柔但倔强",
+                relationship="刚认识用户",
+                user_name="阿峰",
+                user_birthday="1990-01-01",
+            ),
+            profile_override=invalid_profile,
+        )
+
+    assert "relationship.trust" in str(exc_info.value)
+    assert not (tmp_path / "SOUL_PROFILE.md").exists()
+    assert not (tmp_path / "SOUL.md").exists()
 
 
 def test_bootstrap_workspace_persists_soul_only_from_profile(tmp_path):

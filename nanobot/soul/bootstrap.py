@@ -60,6 +60,17 @@ def bootstrap_workspace(
 ) -> None:
     """Create or overwrite the soul workspace files for Phase 1."""
 
+    heart_markdown = heart_markdown_override or render_initial_heart_markdown(
+        payload.personality,
+        initial_relationship=payload.relationship,
+    )
+    profile = deepcopy(profile_override) if profile_override is not None else build_initial_profile(
+        personality_values,
+        personality_seed=payload.personality,
+        relationship_seed=payload.relationship,
+    )
+    soul_markdown = project_initial_soul_markdown(profile, use_expression_seed=True)
+
     workspace.mkdir(parents=True, exist_ok=True)
 
     (workspace / "IDENTITY.md").write_text(
@@ -87,10 +98,6 @@ def bootstrap_workspace(
         encoding="utf-8",
     )
 
-    heart_markdown = heart_markdown_override or render_initial_heart_markdown(
-        payload.personality,
-        initial_relationship=payload.relationship,
-    )
     HeartManager(workspace).write_text(heart_markdown)
     EventsManager(workspace).initialize(
         ai_name=payload.ai_name,
@@ -99,13 +106,7 @@ def bootstrap_workspace(
         user_birthday=payload.user_birthday or None,
     )
 
-    profile = deepcopy(profile_override) if profile_override is not None else build_initial_profile(
-        personality_values,
-        personality_seed=payload.personality,
-        relationship_seed=payload.relationship,
-    )
     SoulProfileManager(workspace).write(profile)
-    soul_markdown = project_initial_soul_markdown(profile, use_expression_seed=True)
     (workspace / "SOUL.md").write_text(
         soul_markdown,
         encoding="utf-8",

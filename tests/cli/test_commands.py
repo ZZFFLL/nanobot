@@ -507,6 +507,103 @@ def test_soul_init_falls_back_before_persisting_invalid_expression_seed_types(tm
     assert audit_payload["result"]["profile_source"] == "fallback"
 
 
+def test_soul_init_full_rerun_uses_effective_governance_for_llm_init_and_adjudication(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    (workspace_path / "SOUL_GOVERNANCE.json").write_text(
+        json.dumps(
+            {
+                "init": {
+                    "allowed_stages": ["还不认识"],
+                    "relationship_boundary_min": 0.95,
+                    "boundary_expression_min": 0.96,
+                    "require_profile_projection_for_soul": True,
+                    "allow_soul_only_without_profile": False,
+                    "allow_existing_soul_seed_for_init": False,
+                }
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    governance_template = {
+        "init": {
+            "allowed_stages": ["熟悉"],
+            "relationship_boundary_min": 0.50,
+            "boundary_expression_min": 0.60,
+            "require_profile_projection_for_soul": True,
+            "allow_soul_only_without_profile": False,
+            "allow_existing_soul_seed_for_init": False,
+        }
+    }
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(
+        return_value=MagicMock(
+            content=(
+                '{"soul_markdown":"# 性格\\n\\n细腻克制。\\n\\n# 初始关系\\n\\n刚刚熟悉，会谨慎靠近。",'
+                '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低\\n\\n## 关系状态\\n刚刚熟悉。\\n\\n## 性格表现\\n细腻克制。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
+                '"profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},'
+                '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.60,"affection":0.0},'
+                '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.70}}}'
+            )
+        )
+    )
+
+    from nanobot.soul import bootstrap as soul_bootstrap
+
+    original_load_workspace_template = soul_bootstrap.load_workspace_template
+
+    def _load_workspace_template(filename: str) -> str:
+        if filename == "SOUL_GOVERNANCE.json":
+            return json.dumps(governance_template, ensure_ascii=False, indent=2) + "\n"
+        return original_load_workspace_template(filename)
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+    monkeypatch.setattr("nanobot.soul.bootstrap.load_workspace_template", _load_workspace_template)
+    monkeypatch.setattr("nanobot.soul.init_files.load_workspace_template", _load_workspace_template)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path)],
+        input=(
+            "温予安\n"
+            "女\n"
+            "2026-04-01\n"
+            "温柔但倔强，嘴硬心软\n"
+            "刚刚被创造，对用户充满好奇\n"
+            "阿峰\n"
+            "1990-01-01\n"
+        ),
+    )
+
+    prompt = provider.chat_with_retry.await_args.kwargs["messages"][1]["content"]
+    profile = SoulProfileManager(workspace_path).read()
+    heart_text = (workspace_path / "HEART.md").read_text(encoding="utf-8")
+
+    assert result.exit_code == 0
+    assert "relationship.stage 只能是“熟悉”中的一个" in prompt
+    assert "relationship.boundary 至少 0.50" in prompt
+    assert "boundary_expression 至少 0.60" in prompt
+    assert profile["relationship"]["stage"] == "熟悉"
+    assert profile["relationship"]["boundary"] == 0.60
+    assert profile["companionship"]["boundary_expression"] == 0.70
+    assert "刚刚熟悉" in heart_text
+
+
 def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"
