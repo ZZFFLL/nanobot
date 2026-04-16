@@ -1519,12 +1519,57 @@ def _print_soul_init_trace(trace) -> None:
         console.print(f"[dim]• {line}[/dim]")
 
 
+def _resolve_soul_init_profile_source(workspace: Path, run_result, *, targets: list[str] | None = None) -> str:
+    from nanobot.soul.init_files import normalize_only_files
+    from nanobot.soul.methodology import load_init_governance
+
+    resolved_targets = normalize_only_files(targets or [])
+    governance = load_init_governance(workspace)
+    default_source = run_result.profile_source or (
+        "fallback" if run_result.adjudicated.used_fallback else "inferred"
+    )
+    if (
+        "SOUL.md" in resolved_targets
+        and governance.require_profile_projection_for_soul
+        and "SOUL_PROFILE.md" not in resolved_targets
+        and (workspace / "SOUL_PROFILE.md").exists()
+    ):
+        return "existing-profile-rebuild"
+    return default_source
+
+
+def _read_soul_init_audit_result(workspace: Path, run_result, *, targets: list[str] | None = None) -> dict:
+    from nanobot.soul.heart import HeartManager
+    from nanobot.soul.profile import SoulProfileManager
+
+    heart_markdown = HeartManager(workspace).read_text() or run_result.adjudicated.heart_markdown
+    profile = (
+        SoulProfileManager(workspace).read()
+        if (workspace / "SOUL_PROFILE.md").exists()
+        else run_result.adjudicated.profile
+    )
+    projected_soul_markdown = (
+        (workspace / "SOUL.md").read_text(encoding="utf-8")
+        if (workspace / "SOUL.md").exists()
+        else run_result.adjudicated.soul_markdown
+    )
+    return {
+        "heart_markdown": heart_markdown,
+        "profile": profile,
+        "projected_soul_markdown": projected_soul_markdown,
+        "profile_source": _resolve_soul_init_profile_source(
+            workspace,
+            run_result,
+            targets=targets,
+        ),
+    }
+
+
 def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
     from datetime import datetime
 
     from nanobot.soul.logs import SoulLogWriter, build_init_audit_payload
     from nanobot.soul.methodology import load_init_governance
-    from nanobot.soul.projection import project_initial_soul_markdown
 
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     writer = SoulLogWriter(workspace)
@@ -1541,6 +1586,7 @@ def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targe
         candidate["heart_markdown"] = run_result.candidate_heart_markdown
     if run_result.candidate_profile is not None:
         candidate["profile"] = run_result.candidate_profile
+    result = _read_soul_init_audit_result(workspace, run_result, targets=targets)
     audit_payload = build_init_audit_payload(
         timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
         model=model,
@@ -1555,24 +1601,17 @@ def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targe
             "boundary_expression_min": governance.boundary_expression_min,
         },
         candidate=candidate or None,
-        heart_markdown=run_result.adjudicated.heart_markdown,
-        profile=run_result.adjudicated.profile,
-        projected_soul_markdown=project_initial_soul_markdown(
-            run_result.adjudicated.profile,
-            use_expression_seed=True,
-        ),
-        profile_source=run_result.profile_source or (
-            "fallback" if run_result.adjudicated.used_fallback else "inferred"
-        ),
+        heart_markdown=result["heart_markdown"],
+        profile=result["profile"],
+        projected_soul_markdown=result["projected_soul_markdown"],
+        profile_source=result["profile_source"],
     )
     audit_path = writer.write_init_audit(stamp, audit_payload)
     console.print(f"[dim]  audit saved: {audit_path}[/dim]")
 
 
-def _report_soul_init_run(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
+def _print_soul_init_summary(run_result) -> None:
     adjudicated = run_result.adjudicated
-    _print_soul_init_trace(run_result.trace)
-    _write_soul_init_artifacts(workspace, run_result, model=model, targets=targets)
     if not adjudicated.used_fallback:
         console.print(
             "[green]✓[/green] "
@@ -1669,6 +1708,7 @@ def soul_init(
 
         heart_markdown_override: str | None = None
         profile_override: dict | None = None
+        run_result = None
         if use_llm and provider and payload is not None:
             try:
                 import asyncio as _asyncio
@@ -1684,12 +1724,7 @@ def soul_init(
                 adjudicated = run_result.adjudicated
                 heart_markdown_override = adjudicated.heart_markdown
                 profile_override = adjudicated.profile
-                _report_soul_init_run(
-                    ws,
-                    run_result,
-                    model=effective_cfg.agents.defaults.model,
-                    targets=targets,
-                )
+                _print_soul_init_trace(run_result.trace)
             except Exception:
                 console.print("[dim]  (LLM soul init skipped — fallback initialization used)[/dim]")
 
@@ -1706,6 +1741,15 @@ def soul_init(
         except ValueError as exc:
             console.print(f"[red]{exc}[/red]")
             raise typer.Exit(2) from exc
+
+        if run_result is not None:
+            _write_soul_init_artifacts(
+                ws,
+                run_result,
+                model=effective_cfg.agents.defaults.model,
+                targets=targets,
+            )
+            _print_soul_init_summary(run_result)
 
         if resolved_config_path.exists():
             cfg = load_config(resolved_config_path)
@@ -1729,6 +1773,7 @@ def soul_init(
     personality_values: dict[str, float] | None = None
     heart_markdown_override: str | None = None
     profile_override: dict | None = None
+    run_result = None
 
     # Optional LLM-backed soul initialization
     try:
@@ -1758,12 +1803,7 @@ def soul_init(
             heart_markdown_override = adjudicated.heart_markdown
             profile_override = adjudicated.profile
             personality_values = adjudicated.profile.get("personality", {})
-            _report_soul_init_run(
-                ws,
-                run_result,
-                model=effective_cfg.agents.defaults.model,
-                targets=["SOUL.md", "SOUL_PROFILE.md"],
-            )
+            _print_soul_init_trace(run_result.trace)
     except Exception:
         console.print("[dim]  (LLM soul init skipped — fallback initialization used)[/dim]")
 
@@ -1782,6 +1822,14 @@ def soul_init(
         heart_markdown_override=heart_markdown_override,
         profile_override=profile_override,
     )
+    if run_result is not None:
+        _write_soul_init_artifacts(
+            ws,
+            run_result,
+            model=effective_cfg.agents.defaults.model,
+            targets=["SOUL.md", "SOUL_PROFILE.md"],
+        )
+        _print_soul_init_summary(run_result)
     console.print("[green]✓[/green] IDENTITY.md created")
     console.print("[green]✓[/green] SOUL.md created")
     console.print("[green]✓[/green] HEART.md created")
