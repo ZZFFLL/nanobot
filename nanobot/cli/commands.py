@@ -1703,7 +1703,6 @@ def soul_init(
     user_birthday = typer.prompt("用户的生日（可选，格式 YYYY-MM-DD）", default="")
 
     personality_values: dict[str, float] | None = None
-    personality_markdown: str | None = None
     heart_markdown_override: str | None = None
     profile_override: dict | None = None
 
@@ -1756,7 +1755,6 @@ def soul_init(
             user_birthday=user_birthday,
         ),
         personality_values=personality_values,
-        personality_markdown=personality_markdown,
         heart_markdown_override=heart_markdown_override,
         profile_override=profile_override,
     )

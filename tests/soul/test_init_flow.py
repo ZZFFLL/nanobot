@@ -70,7 +70,7 @@ def test_bootstrap_workspace_writes_profile_before_projected_soul(tmp_path, monk
         seen.append("project")
         assert (tmp_path / "SOUL_PROFILE.md").exists()
         assert profile["relationship"]["stage"] == "熟悉"
-        assert _kwargs == {}
+        assert _kwargs == {"use_expression_seed": True}
         return "# 性格\n\n投影后的性格。\n\n# 初始关系\n\n投影后的关系。\n"
 
     monkeypatch.setattr("nanobot.soul.bootstrap.SoulProfileManager.write", _track_profile_write)
@@ -241,6 +241,35 @@ def test_soul_init_only_soul_force_rebuilds_from_existing_profile(tmp_path, monk
 
     assert result.exit_code == 0
     assert (workspace / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(profile)
+
+
+def test_soul_init_only_soul_force_ignores_stale_expression_seed_on_persisted_profile(
+    tmp_path, monkeypatch
+):
+    from nanobot.soul.projection import project_initial_soul_markdown
+
+    config_path, workspace = _write_config(tmp_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    profile = _profile(stage="亲近")
+    profile["expression"] = {
+        "personality_seed": "旧的初始化性格文本",
+        "relationship_seed": "旧的初始化关系文本",
+    }
+    SoulProfileManager(workspace).write(profile)
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "SOUL.md", "--force"],
+    )
+
+    soul_text = (workspace / "SOUL.md").read_text(encoding="utf-8")
+    assert result.exit_code == 0
+    assert soul_text == project_initial_soul_markdown(profile, use_expression_seed=False)
+    assert "旧的初始化性格文本" not in soul_text
+    assert "旧的初始化关系文本" not in soul_text
+    assert "更稳定的信任" in soul_text
 
 
 def test_soul_init_only_soul_force_fails_clearly_for_malformed_profile(tmp_path, monkeypatch):

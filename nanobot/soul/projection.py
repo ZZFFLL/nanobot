@@ -63,11 +63,11 @@ class SoulProjectionError(RuntimeError):
     """Raised when SOUL.md projection fails validation."""
 
 
-def project_initial_soul_markdown(profile: dict) -> str:
+def project_initial_soul_markdown(profile: dict, *, use_expression_seed: bool = True) -> str:
     """Build init-time ``SOUL.md`` from structured profile state."""
 
-    personality = _project_personality_text(profile)
-    relationship = _project_relationship_text(profile)
+    personality = _project_personality_text(profile, use_expression_seed=use_expression_seed)
+    relationship = _project_relationship_text(profile, use_expression_seed=use_expression_seed)
     return (
         "# 性格\n\n"
         f"{personality}\n\n"
@@ -305,9 +305,9 @@ def _extract_section(text: str, heading: str) -> str:
     return match.group(1).strip() if match else ""
 
 
-def _project_personality_text(profile: dict) -> str:
+def _project_personality_text(profile: dict, *, use_expression_seed: bool) -> str:
     expression = profile.get("expression") if isinstance(profile, dict) else {}
-    if isinstance(expression, dict):
+    if use_expression_seed and isinstance(expression, dict):
         personality_seed = str(expression.get("personality_seed") or "").strip()
         if personality_seed:
             return personality_seed
@@ -337,9 +337,9 @@ def _project_personality_text(profile: dict) -> str:
     return f"她的慢状态气质以{trait_text}为主，在靠近他人之前也会先确认自己的感受与边界。"
 
 
-def _project_relationship_text(profile: dict) -> str:
+def _project_relationship_text(profile: dict, *, use_expression_seed: bool) -> str:
     expression = profile.get("expression") if isinstance(profile, dict) else {}
-    if isinstance(expression, dict):
+    if use_expression_seed and isinstance(expression, dict):
         relationship_seed = str(expression.get("relationship_seed") or "").strip()
         if relationship_seed:
             return relationship_seed

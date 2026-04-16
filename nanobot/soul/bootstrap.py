@@ -50,7 +50,6 @@ def bootstrap_workspace(
     payload: SoulInitPayload,
     *,
     personality_values: dict[str, float] | None = None,
-    personality_markdown: str | None = None,
     heart_markdown_override: str | None = None,
     profile_override: dict | None = None,
 ) -> None:
@@ -101,7 +100,7 @@ def bootstrap_workspace(
         relationship_seed=payload.relationship,
     )
     SoulProfileManager(workspace).write(profile)
-    soul_markdown = project_initial_soul_markdown(profile)
+    soul_markdown = project_initial_soul_markdown(profile, use_expression_seed=True)
     (workspace / "SOUL.md").write_text(
         soul_markdown,
         encoding="utf-8",
@@ -145,8 +144,6 @@ def build_identity_markdown(payload: SoulInitPayload) -> str:
 
 def build_soul_markdown(
     payload: SoulInitPayload,
-    *,
-    personality_markdown: str | None = None,
 ) -> str:
     """Render ``SOUL.md`` as the slow-changing expression layer."""
 

@@ -230,8 +230,12 @@ def write_selected_files(
                     raise ValueError(f"{filename} 初始化需要有效的 payload")
                 target.write_text(build_core_anchor_markdown(payload), encoding="utf-8")
             elif filename == "SOUL.md":
+                use_expression_seed = written_profile is not None
                 target.write_text(
-                    project_initial_soul_markdown(_resolve_profile_source(workspace, written_profile)),
+                    project_initial_soul_markdown(
+                        _resolve_profile_source(workspace, written_profile),
+                        use_expression_seed=use_expression_seed,
+                    ),
                     encoding="utf-8",
                 )
             elif filename == "HEART.md":
