@@ -782,6 +782,164 @@ def test_soul_init_only_soul_and_heart_audit_uses_post_write_existing_profile_st
     )
 
 
+def test_soul_init_only_heart_audit_uses_existing_profile_source(tmp_path, monkeypatch):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    persisted_profile = {
+        "personality": {
+            "Fi": 0.35,
+            "Fe": 0.66,
+            "Ti": 0.15,
+            "Te": 0.11,
+            "Si": 0.39,
+            "Se": 0.10,
+            "Ni": 0.42,
+            "Ne": 0.54,
+        },
+        "relationship": {
+            "stage": "熟悉",
+            "trust": 0.24,
+            "intimacy": 0.08,
+            "attachment": 0.02,
+            "security": 0.18,
+            "boundary": 0.89,
+            "affection": 0.04,
+        },
+        "companionship": {
+            "empathy_fit": 0.26,
+            "memory_fit": 0.09,
+            "naturalness": 0.33,
+            "initiative_quality": 0.07,
+            "scene_awareness": 0.21,
+            "boundary_expression": 0.88,
+        },
+        "expression": {
+            "personality_seed": "既有画像里的性格种子",
+            "relationship_seed": "既有画像里的关系种子",
+        },
+    }
+    SoulProfileManager(workspace_path).write(persisted_profile)
+    existing_soul = "# 性格\n\n现有 SOUL 内容。\n\n# 初始关系\n\n现有关系内容。\n"
+    (workspace_path / "SOUL.md").write_text(existing_soul, encoding="utf-8")
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content=(
+            '{'
+            '"soul_markdown":"# 性格\\n\\n候选性格。\\n\\n# 初始关系\\n\\n候选关系。",'
+            '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n会先观察，再慢慢确认距离。\\n\\n## 性格表现\\n克制、细腻。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
+            '"profile":{'
+            '"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},'
+            '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.92,"affection":0.0},'
+            '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.90}'
+            '}'
+            '}'
+        )
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        [
+            "soul",
+            "init",
+            "--config",
+            str(config_path),
+            "--only",
+            "HEART.md",
+            "--force",
+        ],
+        input=(
+            "温予安\n"
+            "温柔但倔强\n"
+            "刚认识用户\n"
+            "阿峰\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    audit_files = list((workspace_path / "soul_logs" / "init").glob("*-初始化审计.json"))
+    assert len(audit_files) == 1
+    audit_payload = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit_payload["result"]["profile"] == persisted_profile
+    assert audit_payload["result"]["profile_source"] == "existing-profile"
+    assert audit_payload["result"]["projected_soul_markdown"] == existing_soul
+
+
+def test_soul_init_only_heart_does_not_crash_when_existing_profile_is_malformed(
+    tmp_path, monkeypatch
+):
+    config_path = tmp_path / "instance" / "config.json"
+    workspace_path = tmp_path / "workspace"
+
+    config = Config()
+    config.agents.defaults.workspace = str(workspace_path)
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(
+        json.dumps(config.model_dump(mode="json", by_alias=True), ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    workspace_path.mkdir(parents=True, exist_ok=True)
+    (workspace_path / "SOUL_PROFILE.md").write_text("{broken json", encoding="utf-8")
+    existing_soul = "# 性格\n\n现有 SOUL 内容。\n\n# 初始关系\n\n现有关系内容。\n"
+    (workspace_path / "SOUL.md").write_text(existing_soul, encoding="utf-8")
+
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(return_value=MagicMock(
+        content=(
+            '{'
+            '"soul_markdown":"# 性格\\n\\n候选性格。\\n\\n# 初始关系\\n\\n候选关系。",'
+            '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低到中\\n\\n## 关系状态\\n会先观察，再慢慢确认距离。\\n\\n## 性格表现\\n克制、细腻。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
+            '"profile":{'
+            '"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},'
+            '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.92,"affection":0.0},'
+            '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.90}'
+            '}'
+            '}'
+        )
+    ))
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+
+    result = runner.invoke(
+        app,
+        [
+            "soul",
+            "init",
+            "--config",
+            str(config_path),
+            "--only",
+            "HEART.md",
+            "--force",
+        ],
+        input=(
+            "温予安\n"
+            "温柔但倔强\n"
+            "刚认识用户\n"
+            "阿峰\n"
+        ),
+    )
+
+    assert result.exit_code == 0
+    assert "HEART.md" in result.stdout
+    audit_files = list((workspace_path / "soul_logs" / "init").glob("*-初始化审计.json"))
+    assert len(audit_files) == 1
+    audit_payload = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit_payload["result"]["profile_source"] == "inferred"
+    assert audit_payload["result"]["profile"]["relationship"]["stage"] == "熟悉"
+    assert audit_payload["result"]["projected_soul_markdown"] == existing_soul
+
+
 def test_soul_init_only_rejects_unknown_filename(tmp_path, monkeypatch):
     config_path = tmp_path / "instance" / "config.json"
     workspace_path = tmp_path / "workspace"

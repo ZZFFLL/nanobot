@@ -1,6 +1,7 @@
 """CLI commands for nanobot."""
 
 import asyncio
+import json
 import os
 import select
 import signal
@@ -1519,15 +1520,24 @@ def _print_soul_init_trace(trace) -> None:
         console.print(f"[dim]• {line}[/dim]")
 
 
-def _resolve_soul_init_profile_source(workspace: Path, run_result, *, targets: list[str] | None = None) -> str:
+def _resolve_soul_init_profile_source(
+    workspace: Path,
+    run_result,
+    *,
+    targets: list[str] | None = None,
+    profile_from_workspace: bool = False,
+) -> str:
     from nanobot.soul.init_files import normalize_only_files
     from nanobot.soul.methodology import load_init_governance
 
     resolved_targets = normalize_only_files(targets or [])
-    governance = load_init_governance(workspace)
     default_source = run_result.profile_source or (
         "fallback" if run_result.adjudicated.used_fallback else "inferred"
     )
+    if not profile_from_workspace:
+        return default_source
+
+    governance = load_init_governance(workspace)
     if (
         "SOUL.md" in resolved_targets
         and governance.require_profile_projection_for_soul
@@ -1535,6 +1545,8 @@ def _resolve_soul_init_profile_source(workspace: Path, run_result, *, targets: l
         and (workspace / "SOUL_PROFILE.md").exists()
     ):
         return "existing-profile-rebuild"
+    if "SOUL_PROFILE.md" not in resolved_targets:
+        return "existing-profile"
     return default_source
 
 
@@ -1543,11 +1555,14 @@ def _read_soul_init_audit_result(workspace: Path, run_result, *, targets: list[s
     from nanobot.soul.profile import SoulProfileManager
 
     heart_markdown = HeartManager(workspace).read_text() or run_result.adjudicated.heart_markdown
-    profile = (
-        SoulProfileManager(workspace).read()
-        if (workspace / "SOUL_PROFILE.md").exists()
-        else run_result.adjudicated.profile
-    )
+    profile = run_result.adjudicated.profile
+    profile_from_workspace = False
+    if (workspace / "SOUL_PROFILE.md").exists():
+        try:
+            profile = SoulProfileManager(workspace).read()
+            profile_from_workspace = True
+        except json.JSONDecodeError:
+            profile = run_result.adjudicated.profile
     projected_soul_markdown = (
         (workspace / "SOUL.md").read_text(encoding="utf-8")
         if (workspace / "SOUL.md").exists()
@@ -1561,6 +1576,7 @@ def _read_soul_init_audit_result(workspace: Path, run_result, *, targets: list[s
             workspace,
             run_result,
             targets=targets,
+            profile_from_workspace=profile_from_workspace,
         ),
     }
 
