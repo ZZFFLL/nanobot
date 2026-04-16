@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 import json
 from pathlib import Path
 
@@ -63,3 +64,44 @@ class SoulLogWriter:
             filename,
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
         )
+
+
+def build_init_audit_payload(
+    *,
+    timestamp: str,
+    model: str,
+    targets: list[str] | None,
+    final_status: str,
+    final_reason: str,
+    accepted_attempt: int | None,
+    used_fallback: bool,
+    governance: dict,
+    candidate: dict | None,
+    heart_markdown: str,
+    profile: dict,
+    projected_soul_markdown: str,
+    profile_source: str,
+) -> dict:
+    """Build the init audit payload with explicit candidate/result separation."""
+
+    payload = {
+        "timestamp": timestamp,
+        "model": model,
+        "targets": list(targets or []),
+        "final_status": final_status,
+        "final_reason": final_reason,
+        "accepted_attempt": accepted_attempt,
+        "used_fallback": used_fallback,
+        "governance": deepcopy(governance),
+        "result": {
+            # Keep the legacy field as an alias of the final projected SOUL.md.
+            "soul_markdown": projected_soul_markdown,
+            "projected_soul_markdown": projected_soul_markdown,
+            "heart_markdown": heart_markdown,
+            "profile": deepcopy(profile),
+            "profile_source": profile_source,
+        },
+    }
+    if candidate:
+        payload["candidate"] = deepcopy(candidate)
+    return payload

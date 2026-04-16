@@ -1522,8 +1522,9 @@ def _print_soul_init_trace(trace) -> None:
 def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
     from datetime import datetime
 
-    from nanobot.soul.logs import SoulLogWriter
+    from nanobot.soul.logs import SoulLogWriter, build_init_audit_payload
     from nanobot.soul.methodology import load_init_governance
+    from nanobot.soul.projection import project_initial_soul_markdown
 
     stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
     writer = SoulLogWriter(workspace)
@@ -1533,25 +1534,37 @@ def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targe
     )
     console.print(f"[dim]  trace saved: {trace_path}[/dim]")
     governance = load_init_governance(workspace)
-    audit_payload = {
-        "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
-        "model": model,
-        "targets": list(targets or []),
-        "final_status": run_result.trace.final_status,
-        "final_reason": run_result.trace.final_reason,
-        "accepted_attempt": run_result.trace.accepted_attempt,
-        "used_fallback": run_result.adjudicated.used_fallback,
-        "governance": {
+    candidate = {}
+    if run_result.candidate_soul_markdown is not None:
+        candidate["soul_markdown"] = run_result.candidate_soul_markdown
+    if run_result.candidate_heart_markdown is not None:
+        candidate["heart_markdown"] = run_result.candidate_heart_markdown
+    if run_result.candidate_profile is not None:
+        candidate["profile"] = run_result.candidate_profile
+    audit_payload = build_init_audit_payload(
+        timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
+        model=model,
+        targets=targets,
+        final_status=run_result.trace.final_status,
+        final_reason=run_result.trace.final_reason,
+        accepted_attempt=run_result.trace.accepted_attempt,
+        used_fallback=run_result.adjudicated.used_fallback,
+        governance={
             "allowed_stages": list(governance.allowed_stages),
             "relationship_boundary_min": governance.relationship_boundary_min,
             "boundary_expression_min": governance.boundary_expression_min,
         },
-        "result": {
-            "soul_markdown": run_result.adjudicated.soul_markdown,
-            "heart_markdown": run_result.adjudicated.heart_markdown,
-            "profile": run_result.adjudicated.profile,
-        },
-    }
+        candidate=candidate or None,
+        heart_markdown=run_result.adjudicated.heart_markdown,
+        profile=run_result.adjudicated.profile,
+        projected_soul_markdown=project_initial_soul_markdown(
+            run_result.adjudicated.profile,
+            use_expression_seed=True,
+        ),
+        profile_source=run_result.profile_source or (
+            "fallback" if run_result.adjudicated.used_fallback else "inferred"
+        ),
+    )
     audit_path = writer.write_init_audit(stamp, audit_payload)
     console.print(f"[dim]  audit saved: {audit_path}[/dim]")
 

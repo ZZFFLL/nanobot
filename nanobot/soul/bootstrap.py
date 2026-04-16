@@ -43,6 +43,10 @@ class SoulInitRunResult:
 
     adjudicated: AdjudicatedSoulInit
     trace: SoulInitTrace
+    candidate_soul_markdown: str | None = None
+    candidate_heart_markdown: str | None = None
+    candidate_profile: dict | None = None
+    profile_source: str = ""
 
 
 def bootstrap_workspace(
@@ -223,6 +227,9 @@ async def infer_adjudicated_soul_init(
     trace = SoulInitTrace(max_attempts=3)
     last_reason = "初始化候选为空"
     last_raw_output = ""
+    last_candidate_soul_markdown: str | None = None
+    last_candidate_heart_markdown: str | None = None
+    last_candidate_profile: dict | None = None
 
     for attempt in range(1, trace.max_attempts + 1):
         try:
@@ -275,6 +282,9 @@ async def infer_adjudicated_soul_init(
                 response.candidate,
                 default_relationship=payload.relationship,
             )
+            last_candidate_soul_markdown = normalized_candidate.soul_markdown
+            last_candidate_heart_markdown = normalized_candidate.heart_markdown
+            last_candidate_profile = deepcopy(normalized_candidate.profile)
 
         adjudicated = adjudicator.adjudicate(
             candidate=normalized_candidate,
@@ -298,7 +308,14 @@ async def infer_adjudicated_soul_init(
             status="accepted",
         )
         trace.finish(status="accepted", accepted_attempt=attempt)
-        return SoulInitRunResult(adjudicated=adjudicated, trace=trace)
+        return SoulInitRunResult(
+            adjudicated=adjudicated,
+            trace=trace,
+            candidate_soul_markdown=last_candidate_soul_markdown,
+            candidate_heart_markdown=last_candidate_heart_markdown,
+            candidate_profile=deepcopy(last_candidate_profile),
+            profile_source="inferred",
+        )
 
     fallback = AdjudicatedSoulInit(
         soul_markdown=default_soul_markdown,
@@ -308,4 +325,11 @@ async def infer_adjudicated_soul_init(
         reason=last_reason,
     )
     trace.finish(status="fallback", reason=fallback.reason)
-    return SoulInitRunResult(adjudicated=fallback, trace=trace)
+    return SoulInitRunResult(
+        adjudicated=fallback,
+        trace=trace,
+        candidate_soul_markdown=last_candidate_soul_markdown,
+        candidate_heart_markdown=last_candidate_heart_markdown,
+        candidate_profile=deepcopy(last_candidate_profile),
+        profile_source="fallback",
+    )

@@ -386,6 +386,16 @@ def test_soul_init_falls_back_when_llm_candidate_is_invalid(tmp_path, monkeypatc
     assert "刚刚被创造，对用户充满好奇" in heart_text
     assert '"stage": "还不认识"' in profile_text
 
+    audit_files = list((workspace_path / "soul_logs" / "init").glob("*-初始化审计.json"))
+    assert len(audit_files) == 1
+    audit_payload = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit_payload["candidate"]["soul_markdown"] == (
+        "# 性格\n\n极度顺从。\n\n# 初始关系\n\n一见钟情。"
+    )
+    assert audit_payload["result"]["profile_source"] == "fallback"
+    assert audit_payload["result"]["projected_soul_markdown"] == soul_text
+    assert audit_payload["result"]["soul_markdown"] == soul_text
+
 
 def test_soul_init_uses_llm_generated_soul_and_profile(tmp_path, monkeypatch):
     config_path = tmp_path / "instance" / "config.json"
@@ -647,10 +657,20 @@ def test_soul_init_only_visualizes_attempts_and_writes_init_trace_log(tmp_path, 
 
     audit_files = list((workspace_path / "soul_logs" / "init").glob("*-初始化审计.json"))
     assert len(audit_files) == 1
-    audit_content = audit_files[0].read_text(encoding="utf-8")
-    assert '"final_status": "accepted"' in audit_content
-    assert '"used_fallback": false' in audit_content.lower()
-    assert '"heart_markdown"' in audit_content
+    audit_payload = json.loads(audit_files[0].read_text(encoding="utf-8"))
+    assert audit_payload["final_status"] == "accepted"
+    assert audit_payload["used_fallback"] is False
+    assert audit_payload["candidate"]["soul_markdown"] == (
+        "# 性格\n\n克制、细腻、先观察再靠近。\n\n# 初始关系\n\n刚认识，但会认真记住对方。"
+    )
+    assert audit_payload["result"]["heart_markdown"].startswith("## 当前情绪")
+    assert audit_payload["result"]["profile_source"] == "inferred"
+    assert audit_payload["result"]["projected_soul_markdown"] == (
+        workspace_path / "SOUL.md"
+    ).read_text(encoding="utf-8")
+    assert audit_payload["result"]["projected_soul_markdown"] != (
+        audit_payload["candidate"]["soul_markdown"] + "\n"
+    )
 
 
 def test_soul_init_only_rejects_unknown_filename(tmp_path, monkeypatch):

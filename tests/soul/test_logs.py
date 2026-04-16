@@ -1,6 +1,6 @@
 """Tests for soul logging utilities."""
 
-from nanobot.soul.logs import SoulLogWriter
+from nanobot.soul.logs import SoulLogWriter, build_init_audit_payload
 from nanobot.soul.proactive import ProactiveDecision
 
 
@@ -91,6 +91,39 @@ def test_log_writer_creates_init_audit_json(tmp_path):
     assert "init" in str(path)
     assert '"final_status": "accepted"' in content
     assert '"used_fallback": false' in content.lower()
+
+
+def test_build_init_audit_payload_separates_candidate_and_projected_result():
+    payload = build_init_audit_payload(
+        timestamp="2026-04-16T10:00:00+08:00",
+        model="test-model",
+        targets=["SOUL.md", "SOUL_PROFILE.md"],
+        final_status="accepted",
+        final_reason="",
+        accepted_attempt=2,
+        used_fallback=False,
+        governance={
+            "allowed_stages": ["还不认识", "熟悉"],
+            "relationship_boundary_min": 0.5,
+            "boundary_expression_min": 0.5,
+        },
+        candidate={
+            "soul_markdown": "# 性格\n\n候选性格。\n\n# 初始关系\n\n候选关系。\n",
+            "profile": {"relationship": {"stage": "熟悉"}},
+        },
+        heart_markdown="## 当前情绪\n安静。\n",
+        profile={"relationship": {"stage": "熟悉"}},
+        projected_soul_markdown="# 性格\n\n投影性格。\n\n# 初始关系\n\n投影关系。\n",
+        profile_source="inferred",
+    )
+
+    assert payload["candidate"]["soul_markdown"] == "# 性格\n\n候选性格。\n\n# 初始关系\n\n候选关系。\n"
+    assert payload["result"]["projected_soul_markdown"] == (
+        "# 性格\n\n投影性格。\n\n# 初始关系\n\n投影关系。\n"
+    )
+    assert payload["result"]["soul_markdown"] == payload["result"]["projected_soul_markdown"]
+    assert payload["result"]["profile"] == {"relationship": {"stage": "熟悉"}}
+    assert payload["result"]["profile_source"] == "inferred"
 
 
 def test_log_writer_creates_projection_trace_and_audit(tmp_path):
