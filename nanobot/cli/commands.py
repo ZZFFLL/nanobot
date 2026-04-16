@@ -1524,13 +1524,13 @@ def _resolve_soul_init_profile_source(
     workspace: Path,
     run_result,
     *,
-    targets: list[str] | None = None,
+    actual_targets: list[str] | None = None,
     profile_from_workspace: bool = False,
 ) -> str:
     from nanobot.soul.init_files import normalize_only_files
     from nanobot.soul.methodology import load_init_governance
 
-    resolved_targets = normalize_only_files(targets or [])
+    resolved_targets = normalize_only_files(actual_targets or [])
     default_source = run_result.profile_source or (
         "fallback" if run_result.adjudicated.used_fallback else "inferred"
     )
@@ -1550,7 +1550,12 @@ def _resolve_soul_init_profile_source(
     return default_source
 
 
-def _read_soul_init_audit_result(workspace: Path, run_result, *, targets: list[str] | None = None) -> dict:
+def _read_soul_init_audit_result(
+    workspace: Path,
+    run_result,
+    *,
+    actual_targets: list[str] | None = None,
+) -> dict:
     from nanobot.soul.heart import HeartManager
     from nanobot.soul.profile import SoulProfileManager
 
@@ -1575,13 +1580,20 @@ def _read_soul_init_audit_result(workspace: Path, run_result, *, targets: list[s
         "profile_source": _resolve_soul_init_profile_source(
             workspace,
             run_result,
-            targets=targets,
+            actual_targets=actual_targets,
             profile_from_workspace=profile_from_workspace,
         ),
     }
 
 
-def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targets: list[str] | None = None) -> None:
+def _write_soul_init_artifacts(
+    workspace: Path,
+    run_result,
+    *,
+    model: str,
+    targets: list[str] | None = None,
+    actions: list | None = None,
+) -> None:
     from datetime import datetime
 
     from nanobot.soul.logs import SoulLogWriter, build_init_audit_payload
@@ -1602,7 +1614,14 @@ def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targe
         candidate["heart_markdown"] = run_result.candidate_heart_markdown
     if run_result.candidate_profile is not None:
         candidate["profile"] = run_result.candidate_profile
-    result = _read_soul_init_audit_result(workspace, run_result, targets=targets)
+    actual_targets = [
+        action.filename for action in (actions or []) if getattr(action, "status", None) != "skipped"
+    ] or targets
+    result = _read_soul_init_audit_result(
+        workspace,
+        run_result,
+        actual_targets=actual_targets,
+    )
     audit_payload = build_init_audit_payload(
         timestamp=datetime.now().astimezone().isoformat(timespec="seconds"),
         model=model,
@@ -1615,6 +1634,9 @@ def _write_soul_init_artifacts(workspace: Path, run_result, *, model: str, targe
             "allowed_stages": list(governance.allowed_stages),
             "relationship_boundary_min": governance.relationship_boundary_min,
             "boundary_expression_min": governance.boundary_expression_min,
+            "require_profile_projection_for_soul": governance.require_profile_projection_for_soul,
+            "allow_soul_only_without_profile": governance.allow_soul_only_without_profile,
+            "allow_existing_soul_seed_for_init": governance.allow_existing_soul_seed_for_init,
         },
         candidate=candidate or None,
         heart_markdown=result["heart_markdown"],
@@ -1764,6 +1786,7 @@ def soul_init(
                 run_result,
                 model=effective_cfg.agents.defaults.model,
                 targets=targets,
+                actions=actions,
             )
             _print_soul_init_summary(run_result)
 

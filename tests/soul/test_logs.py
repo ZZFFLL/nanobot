@@ -126,6 +126,35 @@ def test_build_init_audit_payload_separates_candidate_and_projected_result():
     assert payload["result"]["profile_source"] == "inferred"
 
 
+def test_build_init_audit_payload_preserves_init_governance_booleans():
+    payload = build_init_audit_payload(
+        timestamp="2026-04-16T10:00:00+08:00",
+        model="test-model",
+        targets=["HEART.md"],
+        final_status="accepted",
+        final_reason="",
+        accepted_attempt=1,
+        used_fallback=False,
+        governance={
+            "allowed_stages": ["还不认识", "熟悉"],
+            "relationship_boundary_min": 0.5,
+            "boundary_expression_min": 0.5,
+            "require_profile_projection_for_soul": True,
+            "allow_soul_only_without_profile": False,
+            "allow_existing_soul_seed_for_init": True,
+        },
+        candidate=None,
+        heart_markdown="## 当前情绪\n安静。\n",
+        profile={"relationship": {"stage": "熟悉"}},
+        projected_soul_markdown="# 性格\n\n投影性格。\n\n# 初始关系\n\n投影关系。\n",
+        profile_source="existing-profile",
+    )
+
+    assert payload["governance"]["require_profile_projection_for_soul"] is True
+    assert payload["governance"]["allow_soul_only_without_profile"] is False
+    assert payload["governance"]["allow_existing_soul_seed_for_init"] is True
+
+
 def test_log_writer_creates_projection_trace_and_audit(tmp_path):
     writer = SoulLogWriter(tmp_path)
 
