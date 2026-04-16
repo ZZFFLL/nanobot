@@ -22,7 +22,11 @@ from nanobot.soul.events import EventsManager
 from nanobot.soul.heart import HeartManager, render_initial_heart_markdown
 from nanobot.soul.methodology import InitGovernance, load_init_governance
 from nanobot.soul.profile import SoulProfileManager
-from nanobot.soul.projection import project_initial_soul_markdown, projectable_profile_error
+from nanobot.soul.projection import (
+    normalize_projectable_profile,
+    project_initial_soul_markdown,
+    projectable_profile_error,
+)
 
 ALLOWED_INIT_FILES = (
     "IDENTITY.md",
@@ -338,10 +342,7 @@ def write_selected_files(
 
 def _resolve_profile_source(workspace: Path, profile_override: dict | None) -> dict:
     if profile_override is not None:
-        error = projectable_profile_error(profile_override)
-        if error:
-            raise ValueError(f"SOUL_PROFILE.md 内容非法，无法重建 SOUL.md: {error}")
-        return profile_override
+        return normalize_projectable_profile(profile_override, error_cls=ValueError)
     profile_file = workspace / "SOUL_PROFILE.md"
     if not profile_file.exists():
         raise ValueError("SOUL.md 初始化依赖 SOUL_PROFILE.md；请先初始化 SOUL_PROFILE.md")
@@ -349,10 +350,7 @@ def _resolve_profile_source(workspace: Path, profile_override: dict | None) -> d
         profile = SoulProfileManager(workspace).read()
     except json.JSONDecodeError as exc:
         raise ValueError("SOUL_PROFILE.md 格式非法，无法重建 SOUL.md") from exc
-    error = projectable_profile_error(profile)
-    if error:
-        raise ValueError(f"SOUL_PROFILE.md 内容非法，无法重建 SOUL.md: {error}")
-    return profile
+    return normalize_projectable_profile(profile, error_cls=ValueError)
 
 
 def can_initialize_soul_without_profile(

@@ -9,6 +9,8 @@ import re
 
 import json_repair
 
+from nanobot.soul.methodology import InitGovernance
+
 
 INIT_SOUL_PROMPT = (
     "你是数字伴侣初始化评估器。"
@@ -108,12 +110,19 @@ def _extract_json_payload(text: str) -> dict | None:
 class SoulInitInference:
     """Call the configured provider to build an initialization candidate."""
 
-    def __init__(self, provider, model: str, *, workspace: Path | None = None) -> None:
+    def __init__(
+        self,
+        provider,
+        model: str,
+        *,
+        workspace: Path | None = None,
+        governance: InitGovernance | None = None,
+    ) -> None:
         from nanobot.soul.methodology import load_init_governance
 
         self.provider = provider
         self.model = model
-        self.governance = load_init_governance(workspace)
+        self.governance = governance or load_init_governance(workspace)
 
     async def infer(
         self,

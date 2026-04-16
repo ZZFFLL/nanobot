@@ -2,6 +2,8 @@
 
 import json
 from dataclasses import replace
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 from typer.testing import CliRunner
 
@@ -395,6 +397,45 @@ def test_soul_init_only_soul_force_rebuilds_from_existing_profile(tmp_path, monk
     assert (workspace / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(profile)
 
 
+def test_soul_init_only_soul_force_accepts_normalizable_legacy_partial_profile(tmp_path, monkeypatch):
+    from nanobot.soul.projection import normalize_projectable_profile, project_initial_soul_markdown
+
+    config_path, workspace = _write_config(tmp_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    legacy_profile = {
+        "personality": {
+            "Fi": 0.82,
+        },
+        "relationship": {
+            "stage": "熟悉",
+            "trust": 0.12,
+            "boundary": 0.92,
+        },
+        "companionship": {
+            "boundary_expression": 0.90,
+        },
+    }
+    SoulProfileManager(workspace).write(legacy_profile)
+    (workspace / "SOUL.md").write_text(
+        "# 性格\n\n旧性格。\n\n# 初始关系\n\n旧关系。\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: None)
+
+    result = runner.invoke(
+        app,
+        ["soul", "init", "--config", str(config_path), "--only", "SOUL.md", "--force"],
+    )
+
+    normalized = normalize_projectable_profile(legacy_profile)
+    assert result.exit_code == 0
+    assert (workspace / "SOUL.md").read_text(encoding="utf-8") == project_initial_soul_markdown(
+        normalized,
+        use_expression_seed=False,
+    )
+
+
 def test_soul_init_only_soul_force_ignores_stale_expression_seed_on_persisted_profile(
     tmp_path, monkeypatch
 ):
@@ -593,3 +634,79 @@ def test_soul_init_only_profile_reuses_existing_soul_seed_when_governance_allows
     assert result.exit_code == 0
     assert profile["expression"]["personality_seed"] == "来自既有 SOUL 的性格。"
     assert profile["expression"]["relationship_seed"] == "来自既有 SOUL 的关系。"
+
+
+def test_soul_init_same_run_governance_overwrite_drives_llm_prompt_and_acceptance(
+    tmp_path, monkeypatch
+):
+    config_path, workspace = _write_config(tmp_path)
+    workspace.mkdir(parents=True, exist_ok=True)
+    _write_governance(
+        workspace,
+        allowed_stages=["还不认识"],
+        relationship_boundary_min=0.95,
+        boundary_expression_min=0.96,
+    )
+    governance_template = {
+        "init": {
+            "allowed_stages": ["熟悉"],
+            "relationship_boundary_min": 0.50,
+            "boundary_expression_min": 0.60,
+            "require_profile_projection_for_soul": True,
+            "allow_soul_only_without_profile": False,
+            "allow_existing_soul_seed_for_init": False,
+        }
+    }
+    provider = MagicMock()
+    provider.chat_with_retry = AsyncMock(
+        return_value=SimpleNamespace(
+            content=(
+                '{"soul_markdown":"# 性格\\n\\n细腻克制。\\n\\n# 初始关系\\n\\n刚刚熟悉，会谨慎靠近。",'
+                '"heart_markdown":"## 当前情绪\\n安静。\\n\\n## 情绪强度\\n低\\n\\n## 关系状态\\n刚刚熟悉。\\n\\n## 性格表现\\n细腻克制。\\n\\n## 情感脉络\\n（暂无）\\n\\n## 情绪趋势\\n尚在形成\\n\\n## 当前渴望\\n想慢一点理解用户。",'
+                '"profile":{"personality":{"Fi":0.82,"Fe":0.28,"Ti":0.16,"Te":0.10,"Si":0.42,"Se":0.08,"Ni":0.24,"Ne":0.60},'
+                '"relationship":{"stage":"熟悉","trust":0.12,"intimacy":0.04,"attachment":0.0,"security":0.10,"boundary":0.60,"affection":0.0},'
+                '"companionship":{"empathy_fit":0.22,"memory_fit":0.02,"naturalness":0.25,"initiative_quality":0.0,"scene_awareness":0.12,"boundary_expression":0.70}}}'
+            )
+        )
+    )
+
+    monkeypatch.setattr("nanobot.cli.commands._make_provider", lambda _cfg: provider)
+    monkeypatch.setattr(
+        "nanobot.soul.init_files.load_workspace_template",
+        lambda filename: (
+            json.dumps(governance_template, ensure_ascii=False, indent=2) + "\n"
+            if filename == "SOUL_GOVERNANCE.json"
+            else (_ for _ in ()).throw(AssertionError(f"unexpected template request: {filename}"))
+        ),
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "soul",
+            "init",
+            "--config",
+            str(config_path),
+            "--only",
+            "SOUL_GOVERNANCE.json",
+            "--only",
+            "SOUL_PROFILE.md",
+            "--only",
+            "HEART.md",
+            "--force",
+        ],
+        input="温予安\n温柔但倔强\n刚刚认识用户\n阿峰\n",
+    )
+
+    prompt = provider.chat_with_retry.await_args.kwargs["messages"][1]["content"]
+    profile = SoulProfileManager(workspace).read()
+    heart_text = (workspace / "HEART.md").read_text(encoding="utf-8")
+
+    assert result.exit_code == 0
+    assert "relationship.stage 只能是“熟悉”中的一个" in prompt
+    assert "relationship.boundary 至少 0.50" in prompt
+    assert "boundary_expression 至少 0.60" in prompt
+    assert profile["relationship"]["stage"] == "熟悉"
+    assert profile["relationship"]["boundary"] == 0.60
+    assert profile["companionship"]["boundary_expression"] == 0.70
+    assert "刚刚熟悉" in heart_text

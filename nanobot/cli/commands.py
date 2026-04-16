@@ -1764,6 +1764,7 @@ def soul_init(
                         provider=provider,
                         model=effective_cfg.agents.defaults.model,
                         workspace=ws,
+                        governance=effective_governance,
                     )
                 )
                 adjudicated = run_result.adjudicated

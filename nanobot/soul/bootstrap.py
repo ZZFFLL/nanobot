@@ -16,6 +16,7 @@ from nanobot.soul.init_inference import SoulInitInference
 from nanobot.soul.init_normalizer import normalize_candidate
 from nanobot.soul.init_trace import SoulInitTrace
 from nanobot.soul.methodology import (
+    InitGovernance,
     RELATIONSHIP_DIMENSIONS,
     build_default_profile,
     render_soul_method_markdown,
@@ -210,6 +211,7 @@ async def infer_adjudicated_soul_init(
     provider,
     model: str,
     workspace: Path | None = None,
+    governance: InitGovernance | None = None,
 ) -> SoulInitRunResult:
     """Build and adjudicate an LLM-backed initialization candidate."""
 
@@ -222,8 +224,13 @@ async def infer_adjudicated_soul_init(
         payload.personality,
         initial_relationship=payload.relationship,
     )
-    inference = SoulInitInference(provider=provider, model=model, workspace=workspace)
-    adjudicator = SoulInitAdjudicator(workspace=workspace)
+    inference = SoulInitInference(
+        provider=provider,
+        model=model,
+        workspace=workspace,
+        governance=governance,
+    )
+    adjudicator = SoulInitAdjudicator(workspace=workspace, governance=governance)
     trace = SoulInitTrace(max_attempts=3)
     last_reason = "初始化候选为空"
     last_raw_output = ""
